@@ -14,13 +14,13 @@ scope.coord <- createSCOPE(
   data_dir = scope.path,
   grid_length = seq(5, 150, 1),
   seg_type = "cell",
- filtergenes = T,
+  filtergenes = T,
   max_dist_mol_nuc = 25,
   filterqv = 20,
   max_gene_types = 8000,
   min_gene_types = 1,
   min_seg_points = 1,
- coord_file = scope.coord_file,
+  coord_file = scope.coord_file,
   ncores = 128,
   verbose = TRUE,
   flip_y = T
@@ -33,7 +33,6 @@ for (i in seq(5, 120, 1)) {
   )
 }
 # saveRDS(scope.coord, file = scope.idelta_rds)
-scope.coord <- readRDS(scope.idelta_rds)
 scope.coord <- addSingleCells(
   scope_obj = scope.coord,
   xenium_dir = scope.path
@@ -51,8 +50,6 @@ library(ggplot2)
 library(tidyverse)
 library(inflection)
 
-
-# ---- Stable knee detection helpers ----
 get_smooth_xy <- function(df, span = 0.3, by = 1, method = c("loess", "approx")) {
   method <- match.arg(method)
   df <- df %>% arrange(grid)
@@ -203,7 +200,7 @@ cell_idelta <- meta %>%
   select(gene, cell_iDelta) %>%
   filter(!is.na(cell_iDelta))
 
-grid_cols <- grep("^grid.*_iDelta([.][0-9]+)?$", colnames(meta), value = TRUE)[1:116] 
+grid_cols <- grep("^grid.*_iDelta([.][0-9]+)?$", colnames(meta), value = TRUE)[1:116]
 
 delta_long_tmp <- meta %>%
   select(gene, all_of(grid_cols)) %>%
@@ -239,11 +236,6 @@ delta_long <- delta_long_tmp %>%
   filter(iDelta >= lower & iDelta <= upper) %>%
   select(gene, grid, iDelta) %>%
   arrange(gene, desc(grid))
-
-# delta_long <- delta_only %>%
-#   pivot_longer(-gene, names_to = "grid", values_to = "iDelta") %>%
-#   mutate(grid = as.integer(grid)) %>%
-#   arrange(gene, desc(grid))
 
 delta_long[is.na(delta_long$grid), "grid"] <- -1
 
@@ -307,7 +299,7 @@ p_main <- ggplot(avg_curve_mean, aes(x = grid, y = iDelta_mean)) +
         color = red_color, linewidth = 1, linetype = "solid"
       )
     }
-  } + 
+  } +
   scale_x_reverse(
     breaks = seq(
       min(avg_curve_mean$grid, na.rm = TRUE),
@@ -339,7 +331,7 @@ p_main <- ggplot(avg_curve_mean, aes(x = grid, y = iDelta_mean)) +
     oob = scales::squish,
     breaks = scales::breaks_width(5)
   )
-p_main 
+p_main
 
 ggsave(
   filename = file.path(figures_cosmx_dir, "scope_iDelta_mean_curve_knee_stable.png"),
@@ -349,42 +341,49 @@ ggsave(
   dpi = 600
 )
 cell_curve_points <- res$delta_smooth %>%
-inner_join(cell_idelta, by = "gene") %>%
-group_by(gene) %>%
-mutate(diff = abs(iDelta - cell_iDelta)) %>%
-slice_min(diff, n = 1, with_ties = FALSE) %>%
-ungroup()
+  inner_join(cell_idelta, by = "gene") %>%
+  group_by(gene) %>%
+  mutate(diff = abs(iDelta - cell_iDelta)) %>%
+  slice_min(diff, n = 1, with_ties = FALSE) %>%
+  ungroup()
 
 vline_df <- data.frame(type = "Knee of Mean Curve", x = overall_knee_mean)
 
 p_all_genes_annotated <- ggplot(res$delta_smooth, aes(x = grid, y = iDelta, group = gene)) +
-geom_line(alpha = 0.5, linewidth = 0.5, color = "gray60") +
-geom_ribbon(
-data = knee_range,
-aes(x = x, ymin = ymin - 5, ymax = ymax + 5),
-fill = blue_color, alpha = 0.3,
-linewidth = 0, color = blue_color,
-inherit.aes = FALSE
-) +
-geom_line(
-data = avg_curve_mean,
-aes(x = grid, y = iDelta_mean, group = 1),
-color = "black", linewidth = 1
-) +
-geom_point(
-data = gene_knee_with_y,
+  geom_line(alpha = 0.5, linewidth = 0.5, color = "gray60") +
+  geom_ribbon(
+    data = knee_range,
+    aes(x = x, ymin = ymin - 5, ymax = ymax + 5),
+    fill = blue_color,
+    alpha = 0.3,
+    linewidth = 0,
+    color = blue_color,
+    inherit.aes = FALSE
+  ) +
+  geom_line(
+    data = avg_curve_mean,
+    aes(x = grid, y = iDelta_mean, group = 1),
+    color = "black",
+    linewidth = 1
+  ) +
+  geom_point(
+    data = gene_knee_with_y,
     aes(x = uik_knee, y = knee_y, color = "Gene Wise Knee"),
-size = 1, alpha = 0.5, show.legend = TRUE
-) +
-{
-if (!is.na(overall_knee_mean)) {
-geom_vline(
-data = vline_df,
-aes(xintercept = x, color = type),
-linetype = "solid", linewidth = 1, show.legend = TRUE
-)
-}
-} +
+    size = 1,
+    alpha = 0.5,
+    show.legend = TRUE
+  ) +
+  {
+    if (!is.na(overall_knee_mean)) {
+      geom_vline(
+        data = vline_df,
+        aes(xintercept = x, color = type),
+        linetype = "solid",
+        linewidth = 1,
+        show.legend = TRUE
+      )
+    }
+  } +
   scale_color_manual(
     name = NULL,
     breaks = c("Gene Wise Knee", "Knee of Mean Curve"),
@@ -393,39 +392,43 @@ linetype = "solid", linewidth = 1, show.legend = TRUE
       "Knee of Mean Curve" = red_color
     )
   ) +
-guides(color = guide_legend(override.aes = list(
-linetype = c(0, 1), # dot-only, line-only
-shape = c(16, NA) # dot for gene knee; no dot for mean knee
-)))  +
-scale_x_reverse(
-breaks = seq(
-min(res$delta_smooth$grid, na.rm = TRUE),
-max(res$delta_smooth$grid, na.rm = TRUE),
-by = 10
-)
-) +
+  guides(
+    color = guide_legend(
+      override.aes = list(
+        linetype = c(0, 1), # dot-only, line-only
+        shape = c(16, NA) # dot for gene knee; no dot for mean knee
+      )
+    )
+  ) +
+  scale_x_reverse(
+    breaks = seq(
+      min(res$delta_smooth$grid, na.rm = TRUE),
+      max(res$delta_smooth$grid, na.rm = TRUE),
+      by = 10
+    )
+  ) +
   labs(
     title = "Iδ vs Width (scope)",
     x = "Grid width (μm)",
     y = "Iδ"
   ) +
-theme_minimal(base_size = 8) +
-theme(
-panel.border = element_rect(color = "black", fill = NA),
-panel.background = element_rect(fill = "#c0c0c0", color = NA),
-plot.background = element_rect(fill = "#ffffff", color = NA),
-axis.title = element_text(size = 9),
-axis.text.y = element_text(size = 8),
-axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
-axis.ticks = element_line(color = "black"),
-plot.title = element_text(hjust = 0.5, size = 10),
-legend.position = c(0.02, 0.98),
-legend.justification = c(0, 1),
-legend.background = element_blank(),
-legend.key = element_blank(),
-legend.text = element_text(size = 7),
-plot.margin = unit(c(1, 1, 1, 1), "cm")
-)+
+  theme_minimal(base_size = 8) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA),
+    panel.background = element_rect(fill = "#c0c0c0", color = NA),
+    plot.background = element_rect(fill = "#ffffff", color = NA),
+    axis.title = element_text(size = 9),
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    axis.ticks = element_line(color = "black"),
+    plot.title = element_text(hjust = 0.5, size = 10),
+    legend.position = c(0.02, 0.98),
+    legend.justification = c(0, 1),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    legend.text = element_text(size = 7),
+    plot.margin = unit(c(1, 1, 1, 1), "cm")
+  ) +
   scale_y_continuous(
     limits = c(0, min(100, max(avg_curve_mean$iDelta_mean, na.rm = TRUE))),
     oob = scales::squish,
@@ -433,11 +436,11 @@ plot.margin = unit(c(1, 1, 1, 1), "cm")
   )
 
 ggsave(
-filename = file.path(figures_cosmx_dir, "scope_iDelta_all_genes_annotated_knee_stable.png"),
-plot = p_all_genes_annotated,
-width = 6,
-height = 5,
-dpi = 600
+  filename = file.path(figures_cosmx_dir, "scope_iDelta_all_genes_annotated_knee_stable.png"),
+  plot = p_all_genes_annotated,
+  width = 6,
+  height = 5,
+  dpi = 600
 )
 
 # ==============================

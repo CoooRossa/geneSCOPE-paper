@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Giotto grid-only minimal runner (HPC profile).
+# Giotto grid-only runner.
 # References:
 # - createSpatialGrid: https://giottosuite.com/reference/createSpatialGrid.html
 # - detectSpatialCorFeats: https://giottosuite.com/reference/detectSpatialCorFeats.html

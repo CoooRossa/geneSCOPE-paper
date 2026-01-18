@@ -62,6 +62,9 @@ stage_two_files() {
   mkdir -p "${dst_repdir}"
   mv -f "${src_repdir}/edges_all.tsv" "${dst_repdir}/edges_all.tsv"
   mv -f "${src_repdir}/modules.tsv" "${dst_repdir}/modules.tsv"
+  if [[ -f "${src_repdir}/meta.json" ]]; then
+    mv -f "${src_repdir}/meta.json" "${dst_repdir}/meta.json"
+  fi
 }
 
 run_dataset() {
@@ -192,6 +195,12 @@ run_dataset() {
     mkdir -p "${bench_ds}/hotspot/repeat_001"
     mv -f "${work_modules}/repeat_001/modules.tsv" "${bench_ds}/hotspot/repeat_001/modules.tsv"
     mv -f "${work_edges}/repeat_001/edges_all.tsv" "${bench_ds}/hotspot/repeat_001/edges_all.tsv"
+    if [[ -f "${work_edges}/repeat_001/meta.json" ]]; then
+      mv -f "${work_edges}/repeat_001/meta.json" "${bench_ds}/hotspot/repeat_001/meta.json"
+    fi
+    if [[ -f "${work_modules}/repeat_001/meta.json" ]]; then
+      mv -f "${work_modules}/repeat_001/meta.json" "${bench_ds}/hotspot/repeat_001/meta_modules.json"
+    fi
 
     rm -rf "${work_modules}" "${work_edges}"
   }
@@ -244,6 +253,12 @@ run_dataset() {
     mkdir -p "${bench_ds}/giotto/repeat_001"
     mv -f "${work_modules}/repeat_001/modules.tsv" "${bench_ds}/giotto/repeat_001/modules.tsv"
     mv -f "${work_edges}/repeat_001/edges_all.tsv" "${bench_ds}/giotto/repeat_001/edges_all.tsv"
+    if [[ -f "${work_edges}/repeat_001/meta.json" ]]; then
+      mv -f "${work_edges}/repeat_001/meta.json" "${bench_ds}/giotto/repeat_001/meta.json"
+    fi
+    if [[ -f "${work_modules}/repeat_001/meta.json" ]]; then
+      mv -f "${work_modules}/repeat_001/meta.json" "${bench_ds}/giotto/repeat_001/meta_modules.json"
+    fi
 
     rm -rf "${work_modules}" "${work_edges}"
   }
@@ -251,7 +266,7 @@ run_dataset() {
 
 # ---- EDIT PATHS (host) ----
 # Each dataset is written to:
-#   ${BENCH_ROOT}/{P1,P2,P5,Lymph}/{genescope,giotto,hotspot,seagal}/repeat_001/{edges_all.tsv,modules.tsv}
+#   ${BENCH_ROOT}/{P1,P2,P5,Lymph}/{genescope,giotto,hotspot,seagal}/repeat_001/{edges_all.tsv,modules.tsv,meta.json}
 
 LYMPH_OUTS="/path/to/Xenium_Lymph_node_outs"
 LYMPH_ROI_CSV="/path/to/lymph_select2.csv"
