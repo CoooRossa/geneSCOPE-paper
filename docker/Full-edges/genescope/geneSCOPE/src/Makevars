@@ -1,0 +1,65 @@
+# Cross-platform Makevars for geneSCOPERebuild with portable assignments.
+# Task133: OpenMP auto-detect + controllable enable/disable + safe fallback.
+CXX_STD = CXX17
+
+# Armadillo/BLAS configuration for large inputs; extra macros can be injected via PKG_CPPFLAGS_EXTRA.
+PKG_CPPFLAGS += -DARMA_64BIT_WORD=1 -DARMA_NO_DEBUG=1 \
+    -DOPENBLAS_NUM_THREADS=1 -DMKL_NUM_THREADS=1 \
+    -DARMA_USE_LAPACK -DARMA_USE_BLAS -DNDEBUG \
+    $(PKG_CPPFLAGS_EXTRA)
+
+# --- OpenMP policy ------------------------------------------------------------
+# Controls:
+# - GENESCOPE_DISABLE_OPENMP=1  -> force disable OpenMP
+# - GENESCOPE_FORCE_OPENMP=1    -> force enable OpenMP (errors if libomp not found on macOS)
+# - GENESCOPE_LIBOMP_PREFIX=/path/to/libomp/prefix  -> override macOS libomp prefix
+GENESCOPE_DISABLE_OPENMP ?= 0
+GENESCOPE_FORCE_OPENMP ?= 1
+GENESCOPE_LIBOMP_PREFIX ?=
+
+UNAME_S := $(shell uname -s)
+
+ifeq ($(GENESCOPE_DISABLE_OPENMP),1)
+    PKG_CPPFLAGS += -DGENESCOPE_OPENMP_DISABLED=1
+else
+    ifeq ($(UNAME_S),Darwin)
+        # macOS: use Homebrew libomp when available.
+        ifneq ($(strip $(GENESCOPE_LIBOMP_PREFIX)),)
+            LIBOMP_PREFIX := $(GENESCOPE_LIBOMP_PREFIX)
+        else ifneq ($(wildcard /opt/homebrew/opt/libomp/include/omp.h),)
+            LIBOMP_PREFIX := /opt/homebrew/opt/libomp
+        else ifneq ($(wildcard /usr/local/opt/libomp/include/omp.h),)
+            LIBOMP_PREFIX := /usr/local/opt/libomp
+        else
+            LIBOMP_PREFIX :=
+        endif
+
+        ifeq ($(strip $(LIBOMP_PREFIX)),)
+            ifeq ($(GENESCOPE_FORCE_OPENMP),1)
+                $(error GENESCOPE_FORCE_OPENMP=1 but libomp was not found; install via 'brew install libomp' or set GENESCOPE_LIBOMP_PREFIX to a prefix containing include/omp.h and lib/libomp.dylib)
+            endif
+        else
+            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+            PKG_CXXFLAGS += -Xclang -fopenmp -I$(LIBOMP_PREFIX)/include
+            PKG_LIBS += -L$(LIBOMP_PREFIX)/lib -lomp
+        endif
+    else ifeq ($(UNAME_S),Linux)
+        # Linux: rely on toolchain OpenMP flags (gcc: libgomp, clang: libomp).
+        PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+        PKG_CXXFLAGS += -fopenmp
+        PKG_LIBS += -fopenmp
+    else
+        # Other platforms: build without OpenMP unless user injects flags externally.
+        ifeq ($(GENESCOPE_FORCE_OPENMP),1)
+            PKG_CPPFLAGS += -DGENESCOPE_WITH_OPENMP=1
+            PKG_CXXFLAGS += -fopenmp
+            PKG_LIBS += -fopenmp
+        endif
+    endif
+endif
+
+# Conservative CXX flags with an escape hatch for users that need extra tuning.
+PKG_CXXFLAGS += $(PKG_CXXFLAGS_EXTRA)
+
+# Allow additional linker flags to be supplied externally (e.g. profiling flags).
+PKG_LIBS += $(PKG_LIBS_EXTRA)

@@ -1,0 +1,86 @@
+# Compiled Object files
+*.o
+*.so
+*.dll
+
+# R Data files
+*.RData
+*.Rhistory
+.Rproj.user/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*~
+*.tmp
+*.temp
+
+# Build artifacts
+src/*.o
+src/*.so
+src/*.dll
+src-i386/
+src-x64/
+
+# Development files
+dev/
+Scripts/
+
+# Log files
+*.log
+
+# Package build
+*.tar.gz
+geneSCOPE_*.tar.gz
+
+# Testing
+tests/testthat/test-results/
+
+# R session files
+.RData
+.RDataTmp
+.Ruserdata
+.Rapp.history
+
+# Example code in package build process
+*-Ex.R
+
+# Output files from R CMD check
+/*.Rcheck/
+..Rcheck/
+.Rcheck/
+
+# produced vignettes
+vignettes/*.html
+vignettes/*.pdf
+
+# OAuth2 token
+.httr-oauth
+
+# knitr and R markdown cache directories
+*_cache/
+/cache/
+
+# Temporary files created by R markdown
+*.utf8.md
+*.knit.md
+
+# R Environment Variables
+.Renviron
+
+# pkgdown site
+docs/
+
+# translation temp files
+po/*~
+
+# RStudio Connect folder
+rsconnect/
+.DS_Store
+.quarto

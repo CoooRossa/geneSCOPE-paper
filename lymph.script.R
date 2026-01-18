@@ -1,0 +1,367 @@
+#!/usr/bin/env Rscript
+
+library(geneSCOPE)
+library(ggplot2)
+
+gray_bg_theme <- ggplot2::theme(
+  text = ggplot2::element_text(size = 8, face = "plain"),
+  plot.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
+  panel.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
+  legend.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
+  legend.box.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
+  legend.key = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
+  plot.title = ggplot2::element_text(size = 10, face = "plain"),
+  axis.title = ggplot2::element_text(size = 9, face = "plain"),
+  legend.title = ggplot2::element_text(size = 8, face = "plain"),
+  legend.text = ggplot2::element_text(size = 8),
+  strip.text = ggplot2::element_text(size = 9, face = "plain"),
+  axis.text = ggplot2::element_text(size = 8)
+)
+
+Lymph.path <- "/path/to/xenium_lymph_outs"
+Lymph.coord_file <- "/path/to/lymph_roi.csv"
+
+grid_um <- 30
+grid_name <- paste0("grid", grid_um)
+
+Lymph.coord <- createSCOPE(
+  data_dir = Lymph.path,
+  grid_length = c(grid_um),
+  seg_type = "cell",
+  coord_file = Lymph.coord_file,
+  ncores = 96
+)
+
+Lymph.coord <- addSingleCells(
+  scope_obj = Lymph.coord,
+  xenium_dir = Lymph.path
+)
+
+Lymph.coord <- normalizeSingleCells(
+  scope_obj = Lymph.coord,
+  input_layer = "counts",
+  output_layer = "logCPM",
+  scale_factor = 1e4
+)
+
+Lymph.coord <- normalizeMoleculesInGrid(
+  scope_obj = Lymph.coord,
+  grid_name = grid_name
+)
+
+Lymph.coord <- computeWeights(
+  scope_obj = Lymph.coord,
+  grid_name = grid_name
+)
+
+Lymph.coord <- computeL(
+  scope_obj = Lymph.coord,
+  use_bigmemory = FALSE,
+  grid_name = grid_name,
+  ncores = 64
+)
+
+Lymph.coord <- computeCorrelation(
+  scope_obj = Lymph.coord,
+  level = "cell",
+  layer = "logCPM",
+  method = "pearson",
+  blocksize = 2000,
+  ncores = 64
+)
+
+curve_name <- paste0("LR_curve_", grid_um)
+Lymph.coord <- computeLvsRCurve(
+  scope_obj = Lymph.coord,
+  level = "cell",
+  grid_name = grid_name,
+  ncores = 64,
+  downsample = 0.05,
+  k_max = 2000,
+  n_strata = 1000,
+  min_rel_width = 0.15,
+  widen_span = 0.1,
+  curve_name = curve_name
+)
+
+p_lvsr <- plotLvsR(
+  scope_obj = Lymph.coord,
+  grid_name = grid_name,
+  pear_level = "cell",
+  delta_top_n = 0,
+  flip = TRUE
+)
+
+p_lvsr <- p_lvsr +
+  ggplot2::geom_ribbon(
+    data = Lymph.coord@stats[[grid_name]]$LeeStats_Xz[[curve_name]],
+    ggplot2::aes(x = Pear, ymin = lo95, ymax = hi95),
+    inherit.aes = FALSE,
+    fill = "orange",
+    alpha = 0.25
+  ) +
+  ggplot2::geom_line(
+    data = Lymph.coord@stats[[grid_name]]$LeeStats_Xz[[curve_name]],
+    ggplot2::aes(x = Pear, y = fit),
+    inherit.aes = FALSE,
+    colour = "firebrick",
+    linewidth = 0.8
+  ) +
+  gray_bg_theme
+
+dir.create("./LvsR", showWarnings = FALSE, recursive = TRUE)
+ggsave(
+  filename = file.path("./LvsR", paste0("LvsR_grid", grid_um, ".png")),
+  plot = p_lvsr,
+  width = 6,
+  height = 6,
+  units = "in",
+  dpi = 600
+)
+
+options(future.globals.maxSize = 500000 * 1024^2)
+
+pct_mins <- c("q95.0", "q99.9")
+cluster_cols <- paste0(pct_mins, "_res0.1_grid", grid_um, "_log1p_freq0.95")
+
+network_dir <- file.path(".", paste0("grid", grid_um), "network")
+dir.create(network_dir, recursive = TRUE, showWarnings = FALSE)
+
+for (idx in seq_along(pct_mins)) {
+  pct_min <- pct_mins[[idx]]
+  cluster_col <- cluster_cols[[idx]]
+
+  Lymph.coord <- clusterGenes(
+    scope_obj = Lymph.coord,
+    grid_name = grid_name,
+    L_min = 0,
+    algo = "leiden",
+    resolution = 0.10,
+    pct_min = pct_min,
+    cluster_name = cluster_col,
+    graph_slot_name = cluster_col,
+    use_log1p_weight = TRUE,
+    use_consensus = TRUE,
+    consensus_thr = 0.95,
+    n_restart = 1000
+  )
+
+  Lymph.coord@meta.data[[cluster_col]] <- factor(
+    Lymph.coord@meta.data[[cluster_col]],
+    levels = as.character(sort(unique(na.omit(Lymph.coord@meta.data[[cluster_col]]))))
+  )
+
+  p_network <- plotNetwork(
+    scope_obj = Lymph.coord,
+    lee_stats_layer = "LeeStats_Xz",
+    grid_name = grid_name,
+    use_consensus_graph = TRUE,
+    graph_slot_name = cluster_col,
+    cluster_vec = cluster_col,
+    show_sign = TRUE,
+    drop_isolated = TRUE,
+    neg_linetype = "dashed",
+    vertex_size = 4,
+    max.overlaps = 10,
+    base_edge_mult = 3,
+    label_cex = 4,
+    layout_niter = 1000,
+    seed = 1,
+    hub_factor = 1.5,
+    L_min = 0.11,
+    L_min_neg = 0.11,
+    title = " "
+  ) +
+    gray_bg_theme
+
+  dendro_out <- plotDendroNetwork(
+    scope_obj = Lymph.coord,
+    lee_stats_layer = "LeeStats_Xz",
+    grid_name = grid_name,
+    use_consensus_graph = TRUE,
+    graph_slot_name = cluster_col,
+    cluster_vec = cluster_col,
+    IDelta_col_name = NULL,
+    node_size = 4,
+    edge_width = 3,
+    label_size = 4,
+    seed = 1,
+    max.overlaps = 10,
+    title = " ",
+    tree_mode = "radial"
+  )
+
+  dendro_plot <- if (inherits(dendro_out, "ggplot")) {
+    dendro_out
+  } else if (is.list(dendro_out) && inherits(dendro_out$plot, "ggplot")) {
+    dendro_out$plot
+  } else {
+    stop("plotDendroNetwork returned an unexpected type.")
+  }
+  dendro_plot <- dendro_plot + gray_bg_theme
+
+  ggsave(
+    filename = file.path(network_dir, paste0("network_", cluster_col, ".png")),
+    plot = p_network,
+    width = 15,
+    height = 15,
+    units = "in",
+    dpi = 600
+  )
+
+  ggsave(
+    filename = file.path(network_dir, paste0("dendro_network_", cluster_col, ".png")),
+    plot = dendro_plot,
+    width = 15,
+    height = 15,
+    units = "in",
+    dpi = 600
+  )
+}
+
+density_genes <- c("ITGB2", "PDGFRA", "PTPN6")
+for (gene in density_genes) {
+  Lymph.coord <- computeDensity(
+    scope_obj = Lymph.coord,
+    grid_name = grid_name,
+    layer_name = "counts",
+    normalize_method = "none",
+    density_name = gene,
+    genes = gene
+  )
+}
+
+grid_dir <- file.path(".", paste0("grid", grid_um))
+density_dir <- file.path(grid_dir, "density")
+dir.create(density_dir, recursive = TRUE, showWarnings = FALSE)
+
+p_density_ITGB2_PDGFRA <- plotDensity(
+  scope_obj = Lymph.coord,
+  density1_name = "ITGB2",
+  density2_name = "PDGFRA",
+  max.cutoff1 = 0.3,
+  max.cutoff2 = 0.3,
+  seg_type = "cell",
+  grid_name = grid_name,
+  alpha_seg = 0.5,
+  alpha1 = 1,
+  alpha2 = 0.5,
+  legend_digits = 3,
+  bar_offset = 0.02,
+  arrow_pt = 2,
+  scale_text_size = 1.5
+) +
+  ggplot2::ggtitle(paste0("Lymph Density Overlay ITGB2 vs PDGFRA\nGrid Size ", grid_um)) +
+  gray_bg_theme
+
+ggsave(
+  filename = file.path(density_dir, paste0("ITGB2_PDGFRA_grid", grid_um, ".png")),
+  plot = p_density_ITGB2_PDGFRA,
+  width = 5,
+  height = 5,
+  units = "in",
+  dpi = 600
+)
+
+p_density_ITGB2_PTPN6 <- plotDensity(
+  scope_obj = Lymph.coord,
+  density1_name = "ITGB2",
+  density2_name = "PTPN6",
+  max.cutoff1 = 0.3,
+  max.cutoff2 = 0.3,
+  seg_type = "cell",
+  grid_name = grid_name,
+  alpha_seg = 0.5,
+  alpha1 = 1,
+  alpha2 = 0.5,
+  legend_digits = 3,
+  bar_offset = 0.02,
+  arrow_pt = 2,
+  scale_text_size = 1.5
+) +
+  ggplot2::ggtitle(paste0("Lymph Density Overlay ITGB2 vs PTPN6\nGrid Size ", grid_um)) +
+  gray_bg_theme
+
+ggsave(
+  filename = file.path(density_dir, paste0("ITGB2_PTPN6_grid", grid_um, ".png")),
+  plot = p_density_ITGB2_PTPN6,
+  width = 5,
+  height = 5,
+  units = "in",
+  dpi = 600
+)
+
+cells_density_dir <- file.path(".", "cells", "density")
+dir.create(cells_density_dir, recursive = TRUE, showWarnings = FALSE)
+
+p_centroids_ITGB2_PDGFRA <- plotDensityCentroids(
+  scope_obj = Lymph.coord,
+  gene1_name = "ITGB2",
+  gene2_name = "PDGFRA",
+  seg_type = "cell",
+  max.cutoff1 = 0.3,
+  max.cutoff2 = 0.3,
+  alpha_seg = 0.50,
+  alpha1 = 1,
+  alpha2 = 0.5,
+  bar_offset = 0.02,
+  arrow_pt = 2,
+  scale_text_size = 1.5
+) +
+  ggplot2::ggtitle("Lymph ITGB2 vs PDGFRA Centroids") +
+  gray_bg_theme +
+  ggplot2::scale_x_continuous(breaks = scales::breaks_pretty(n = 3)) +
+  ggplot2::scale_y_continuous(breaks = scales::breaks_pretty(n = 3))
+
+ggsave(
+  filename = file.path(cells_density_dir, "ITGB2_PDGFRA_centroids_grid_cells.png"),
+  plot = p_centroids_ITGB2_PDGFRA,
+  width = 5,
+  height = 5,
+  units = "in",
+  dpi = 600
+)
+
+p_centroids_ITGB2_PTPN6 <- plotDensityCentroids(
+  scope_obj = Lymph.coord,
+  gene1_name = "ITGB2",
+  gene2_name = "PTPN6",
+  seg_type = "cell",
+  max.cutoff1 = 0.3,
+  max.cutoff2 = 0.3,
+  alpha_seg = 0.50,
+  alpha1 = 1,
+  alpha2 = 0.5,
+  bar_offset = 0.02,
+  arrow_pt = 2,
+  scale_text_size = 1.5
+) +
+  ggplot2::ggtitle("Lymph ITGB2 vs PTPN6 Centroids") +
+  gray_bg_theme +
+  ggplot2::scale_x_continuous(breaks = scales::breaks_pretty(n = 3)) +
+  ggplot2::scale_y_continuous(breaks = scales::breaks_pretty(n = 3))
+
+ggsave(
+  filename = file.path(cells_density_dir, "ITGB2_PTPN6_centroids_grid_cells.png"),
+  plot = p_centroids_ITGB2_PTPN6,
+  width = 5,
+  height = 5,
+  units = "in",
+  dpi = 600
+)
+
+p_grid_boundary <- plotGridBoundary(
+  scope_obj = Lymph.coord,
+  grid_name = grid_name
+) +
+  gray_bg_theme
+
+ggsave(
+  filename = file.path(grid_dir, paste0("grid", grid_um, "_boundary.png")),
+  plot = p_grid_boundary,
+  width = 5,
+  height = 5,
+  units = "in",
+  dpi = 600
+)
+
