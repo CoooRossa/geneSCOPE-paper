@@ -100,205 +100,361 @@ read_edges_all <- function(path) {
   edges
 }
 
-load_genescope_score <- function(genescope_root) {
-  if (!is.null(genescope_root) && dir.exists(genescope_root)) {
-    r_files <- c(
-      "R/internal_runtime_utils.R",
-      "R/internal_module_quality_metrics.R",
-      "R/internal_external_reference_metrics.R",
-      "R/internal_external_reference_stringdb.R",
-      "R/internal_external_reference_extractors.R",
-      "R/internal_external_reference_store.R",
-      "R/internal_external_reference_null.R",
-      "R/api_external_reference_store.R"
-    )
-    for (rel in r_files) {
-      src <- file.path(genescope_root, rel)
-      if (!file.exists(src)) stop("Missing geneSCOPE file: ", src)
-      source(src)
-    }
-    .stringdb_cache_env <- function() {
-      if (!exists(".geneSCOPE_cache_env", envir = .GlobalEnv)) {
-        assign(".geneSCOPE_cache_env", new.env(parent = emptyenv()), envir = .GlobalEnv)
-      }
-      get(".geneSCOPE_cache_env", envir = .GlobalEnv)
-    }
-    return("source")
-  }
-
-  if (requireNamespace("geneSCOPE", quietly = TRUE)) {
-    suppressPackageStartupMessages(library(geneSCOPE))
-    return("package")
-  }
-
-  stop("geneSCOPE not installed and genescope_root not found: ", genescope_root)
+.stringdb_update_flag <- function() {
+  opt <- getOption("stringdb_update", FALSE)
+  if (isTRUE(opt)) return(TRUE)
+  env <- Sys.getenv("STRINGDB_UPDATE", "")
+  if (nzchar(env) && !identical(env, "0")) return(TRUE)
+  FALSE
 }
 
-patch_stringdb_link_data <- function(env) {
-  safe_link_data <- function(string_db) {
-    link_data <- tryCatch(string_db$link_data, error = function(e) NULL)
-    if (is.null(link_data) || length(link_data) == 0 || is.na(link_data[[1]])) {
-      return("links")
-    }
-    link_data <- as.character(link_data[[1]])
-    if (!nzchar(link_data)) return("links")
-    tolower(link_data)
+.stringdb_download_with_md5 <- function(url, dest, force_update = FALSE) {
+  dest_dir <- dirname(dest)
+  if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE)
+  md5_path <- paste0(dest, ".md5")
+
+  if (!force_update && file.exists(dest) && file.info(dest)$size > 0) {
+    if (file.exists(md5_path)) return(invisible(TRUE))
+    current <- tryCatch(tools::md5sum(dest), error = function(e) NA_character_)
+    current <- unname(current)
+    if (!is.na(current)) writeLines(current, md5_path)
+    return(invisible(TRUE))
   }
 
-  stringdb_interaction_paths <- function(string_db) {
-    network_type_param <- ""
-    if (tolower(string_db$network_type) == "physical") {
-      network_type_param <- "physical."
+  tmp <- paste0(dest, ".tmp")
+  if (file.exists(tmp)) unlink(tmp)
+
+  old_timeout <- getOption("timeout")
+  on.exit(options(timeout = old_timeout), add = TRUE)
+  if (!is.finite(old_timeout) || old_timeout < 600) options(timeout = 600)
+
+  last_err <- NULL
+  download_ok <- FALSE
+  for (attempt in seq_len(3L)) {
+    warn_msgs <- character()
+    ok <- tryCatch({
+      withCallingHandlers(
+        utils::download.file(url, tmp, mode = "wb", quiet = TRUE),
+        warning = function(w) {
+          warn_msgs <<- c(warn_msgs, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        }
+      )
+      TRUE
+    }, error = function(e) {
+      last_err <<- e
+      FALSE
+    })
+
+    bad_warn <- any(grepl("downloaded length|timeout", warn_msgs, ignore.case = TRUE))
+    if (isTRUE(ok) && !bad_warn && file.exists(tmp) && file.info(tmp)$size > 0) {
+      download_ok <- TRUE
+      break
     }
-    link_data_param <- "links.v"
-    link_data <- safe_link_data(string_db)
-    if (link_data == "detailed") {
-      link_data_param <- "links.detailed.v"
-    } else if (link_data == "full") {
-      link_data_param <- "links.full.v"
-    }
-    file_version <- string_db$file_version
-    species <- string_db$species
-    file_base <- paste0(species, ".protein.", network_type_param, link_data_param, file_version, ".txt.gz")
-    url <- paste0(
-      string_db$protocol,
-      "://stringdb-downloads.org/download/protein.",
-      network_type_param,
-      link_data_param,
-      file_version,
-      "/",
-      file_base
-    )
-    list(
-      url = url,
-      file_base = file_base,
-      file_path = file.path(string_db$input_directory, file_base)
-    )
-  }
-
-  stringdb_prepare_cache_files <- function(string_db, cache_dir, force_update = NULL) {
-    if (is.null(cache_dir) || !nzchar(cache_dir)) return(invisible(FALSE))
-    if (is.null(force_update)) force_update <- .stringdb_update_flag()
-
-    protocol <- string_db$protocol
-    species <- string_db$species
-    file_version <- string_db$file_version
-
-    aliases_base <- paste0(species, ".protein.aliases.v", file_version, ".txt.gz")
-    info_base <- paste0(species, ".protein.info.v", file_version, ".txt.gz")
-
-    aliases_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.aliases.v", file_version, "/", aliases_base)
-    info_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.info.v", file_version, "/", info_base)
-
-    network_type_param <- ""
-    if (tolower(string_db$network_type) == "physical") {
-      network_type_param <- "physical."
-    }
-    link_data_param <- "links.v"
-    link_data <- safe_link_data(string_db)
-    if (link_data == "detailed") {
-      link_data_param <- "links.detailed.v"
-    } else if (link_data == "full") {
-      link_data_param <- "links.full.v"
-    }
-    links_base <- paste0(species, ".protein.", network_type_param, link_data_param, file_version, ".txt.gz")
-    links_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.", network_type_param, link_data_param, file_version, "/", links_base)
-
-    .stringdb_download_with_md5(aliases_url, file.path(cache_dir, aliases_base), force_update = force_update)
-    .stringdb_download_with_md5(info_url, file.path(cache_dir, info_base), force_update = force_update)
-    .stringdb_download_with_md5(links_url, file.path(cache_dir, links_base), force_update = force_update)
-    invisible(TRUE)
-  }
-
-  stringdb_download_with_md5 <- function(url, dest, force_update = FALSE) {
-    dest_dir <- dirname(dest)
-    if (!dir.exists(dest_dir)) dir.create(dest_dir, recursive = TRUE)
-    md5_path <- paste0(dest, ".md5")
-
-    if (!force_update && file.exists(dest) && file.info(dest)$size > 0) {
-      if (file.exists(md5_path)) return(invisible(TRUE))
-      current <- tryCatch(tools::md5sum(dest), error = function(e) NA_character_)
-      current <- unname(current)
-      if (!is.na(current)) writeLines(current, md5_path)
-      return(invisible(TRUE))
-    }
-
-    tmp <- paste0(dest, ".tmp")
     if (file.exists(tmp)) unlink(tmp)
-
-    old_timeout <- getOption("timeout")
-    on.exit(options(timeout = old_timeout), add = TRUE)
-    if (!is.finite(old_timeout) || old_timeout < 600) options(timeout = 600)
-
-    last_err <- NULL
-    download_ok <- FALSE
-    for (attempt in seq_len(3L)) {
-      warn_msgs <- character()
-      ok <- tryCatch({
-        withCallingHandlers(
-          utils::download.file(url, tmp, mode = "wb", quiet = TRUE),
-          warning = function(w) {
-            warn_msgs <<- c(warn_msgs, conditionMessage(w))
-            invokeRestart("muffleWarning")
-          }
-        )
-        TRUE
-      }, error = function(e) {
-        last_err <<- e
-        FALSE
-      })
-
-      bad_warn <- any(grepl("downloaded length|timeout", warn_msgs, ignore.case = TRUE))
-      if (isTRUE(ok) && !bad_warn && file.exists(tmp) && file.info(tmp)$size > 0) {
-        download_ok <- TRUE
-        break
-      }
-      if (file.exists(tmp)) unlink(tmp)
-      Sys.sleep(attempt)
-    }
-
-    if (!download_ok || !file.exists(tmp) || file.info(tmp)$size == 0) {
-      if (file.exists(tmp)) unlink(tmp)
-      msg <- if (!is.null(last_err)) conditionMessage(last_err) else "download failed"
-      stop("Failed to download STRINGdb data: ", basename(dest), " (", msg, ")")
-    }
-
-    new_md5 <- unname(tryCatch(tools::md5sum(tmp), error = function(e) NA_character_))
-
-    ok_rename <- file.rename(tmp, dest)
-    if (!isTRUE(ok_rename)) {
-      file.copy(tmp, dest, overwrite = TRUE)
-      unlink(tmp)
-    }
-    if (!is.na(new_md5)) writeLines(new_md5, md5_path)
-    invisible(TRUE)
+    Sys.sleep(attempt)
   }
 
-  environment(safe_link_data) <- env
-  environment(stringdb_interaction_paths) <- env
-  environment(stringdb_prepare_cache_files) <- env
-  environment(stringdb_download_with_md5) <- env
-
-  safe_assign <- function(name, value) {
-    if (environmentIsLocked(env) && !exists(name, envir = env, inherits = FALSE)) {
-      return(invisible(FALSE))
-    }
-    locked <- FALSE
-    if (exists(name, envir = env, inherits = FALSE) && bindingIsLocked(name, env)) {
-      locked <- TRUE
-      unlockBinding(name, env)
-    }
-    assign(name, value, envir = env)
-    if (locked) lockBinding(name, env)
-    invisible(TRUE)
+  if (!download_ok || !file.exists(tmp) || file.info(tmp)$size == 0) {
+    if (file.exists(tmp)) unlink(tmp)
+    msg <- if (!is.null(last_err)) conditionMessage(last_err) else "download failed"
+    stop("Failed to download STRINGdb data: ", basename(dest), " (", msg, ")")
   }
 
-  safe_assign("safe_link_data", safe_link_data)
-  safe_assign(".stringdb_safe_link_data", safe_link_data)
-  safe_assign(".stringdb_download_with_md5", stringdb_download_with_md5)
-  safe_assign(".stringdb_interaction_paths", stringdb_interaction_paths)
-  safe_assign(".stringdb_prepare_cache_files", stringdb_prepare_cache_files)
+  new_md5 <- unname(tryCatch(tools::md5sum(tmp), error = function(e) NA_character_))
+
+  ok_rename <- file.rename(tmp, dest)
+  if (!isTRUE(ok_rename)) {
+    file.copy(tmp, dest, overwrite = TRUE)
+    unlink(tmp)
+  }
+  if (!is.na(new_md5)) writeLines(new_md5, md5_path)
   invisible(TRUE)
+}
+
+.stringdb_safe_link_data <- function(string_db) {
+  link_data <- tryCatch(string_db$link_data, error = function(e) NULL)
+  if (is.null(link_data) || length(link_data) == 0 || is.na(link_data[[1]])) {
+    return("links")
+  }
+  link_data <- as.character(link_data[[1]])
+  if (!nzchar(link_data)) return("links")
+  tolower(link_data)
+}
+
+.stringdb_interaction_paths <- function(string_db) {
+  network_type_param <- ""
+  if (tolower(string_db$network_type) == "physical") {
+    network_type_param <- "physical."
+  }
+  link_data_param <- "links.v"
+  link_data <- .stringdb_safe_link_data(string_db)
+  if (link_data == "detailed") {
+    link_data_param <- "links.detailed.v"
+  } else if (link_data == "full") {
+    link_data_param <- "links.full.v"
+  }
+  file_version <- string_db$file_version
+  species <- string_db$species
+  file_base <- paste0(species, ".protein.", network_type_param, link_data_param, file_version, ".txt.gz")
+  url <- paste0(
+    string_db$protocol,
+    "://stringdb-downloads.org/download/protein.",
+    network_type_param,
+    link_data_param,
+    file_version,
+    "/",
+    file_base
+  )
+  list(
+    url = url,
+    file_base = file_base,
+    file_path = file.path(string_db$input_directory, file_base)
+  )
+}
+
+.stringdb_prepare_cache_files <- function(string_db, cache_dir, force_update = NULL) {
+  if (is.null(cache_dir) || !nzchar(cache_dir)) return(invisible(FALSE))
+  if (is.null(force_update)) force_update <- .stringdb_update_flag()
+
+  protocol <- string_db$protocol
+  species <- string_db$species
+  file_version <- string_db$file_version
+
+  aliases_base <- paste0(species, ".protein.aliases.v", file_version, ".txt.gz")
+  info_base <- paste0(species, ".protein.info.v", file_version, ".txt.gz")
+
+  aliases_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.aliases.v", file_version, "/", aliases_base)
+  info_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.info.v", file_version, "/", info_base)
+
+  network_type_param <- ""
+  if (tolower(string_db$network_type) == "physical") {
+    network_type_param <- "physical."
+  }
+  link_data_param <- "links.v"
+  link_data <- .stringdb_safe_link_data(string_db)
+  if (link_data == "detailed") {
+    link_data_param <- "links.detailed.v"
+  } else if (link_data == "full") {
+    link_data_param <- "links.full.v"
+  }
+  links_base <- paste0(species, ".protein.", network_type_param, link_data_param, file_version, ".txt.gz")
+  links_url <- paste0(protocol, "://stringdb-downloads.org/download/protein.", network_type_param, link_data_param, file_version, "/", links_base)
+
+  .stringdb_download_with_md5(aliases_url, file.path(cache_dir, aliases_base), force_update = force_update)
+  .stringdb_download_with_md5(info_url, file.path(cache_dir, info_base), force_update = force_update)
+  .stringdb_download_with_md5(links_url, file.path(cache_dir, links_base), force_update = force_update)
+  invisible(TRUE)
+}
+
+.stringdb_connect <- function(species = 9606, score_threshold = 0, version = "12.0", cache_dir = NULL) {
+  cache_dir_use <- cache_dir
+  if (is.null(cache_dir_use) || !nzchar(cache_dir_use)) {
+    cache_dir_use <- tempdir()
+  }
+  dir.create(cache_dir_use, recursive = TRUE, showWarnings = FALSE)
+
+  args <- list(species = as.integer(species), score_threshold = score_threshold, version = version)
+  if (!is.null(cache_dir_use) && nzchar(cache_dir_use)) args$input_directory <- cache_dir_use
+  string_db <- tryCatch(
+    do.call(STRINGdb$new, args),
+    error = function(e) STRINGdb$new(species = as.integer(species), score_threshold = score_threshold, version = version)
+  )
+  .stringdb_prepare_cache_files(string_db, cache_dir_use)
+  string_db
+}
+
+.external_reference_hash <- function(x) {
+  if (!requireNamespace("digest", quietly = TRUE)) {
+    return(NA_character_)
+  }
+  digest::digest(x, algo = "sha256")
+}
+
+.standalone_stringdb_cache_env <- new.env(parent = emptyenv())
+
+.stringdb_cache_env <- function() {
+  .standalone_stringdb_cache_env
+}
+
+.stringdb_cache_get <- function(scope_obj = NULL, cache_dir = NULL, cache_type, cache_key) {
+  if (is.null(cache_key) || is.na(cache_key) || !nzchar(cache_key)) {
+    return(list(value = NULL, cache_hit = FALSE, scope_obj = scope_obj))
+  }
+
+  env <- .stringdb_cache_env()
+  if (exists(cache_key, envir = env, inherits = FALSE)) {
+    cache_val <- get(cache_key, envir = env, inherits = FALSE)
+    if (is.list(cache_val) && !is.null(cache_val[[cache_type]])) {
+      return(list(value = cache_val[[cache_type]], cache_hit = TRUE, scope_obj = scope_obj))
+    }
+  }
+
+  if (!is.null(cache_dir) && nzchar(cache_dir)) {
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    cache_path <- file.path(cache_dir, paste0("stringdb_", cache_type, "_", cache_key, ".rds"))
+    if (file.exists(cache_path)) {
+      return(list(value = readRDS(cache_path), cache_hit = TRUE, scope_obj = scope_obj))
+    }
+  }
+
+  list(value = NULL, cache_hit = FALSE, scope_obj = scope_obj)
+}
+
+.stringdb_cache_put <- function(scope_obj = NULL, cache_dir = NULL, cache_type, cache_key, value) {
+  if (is.null(cache_key) || is.na(cache_key) || !nzchar(cache_key)) {
+    return(list(scope_obj = scope_obj))
+  }
+
+  env <- .stringdb_cache_env()
+  cache_val <- if (exists(cache_key, envir = env, inherits = FALSE)) {
+    get(cache_key, envir = env, inherits = FALSE)
+  } else {
+    list()
+  }
+  if (!is.list(cache_val)) cache_val <- list()
+  cache_val[[cache_type]] <- value
+  assign(cache_key, cache_val, envir = env)
+
+  if (!is.null(cache_dir) && nzchar(cache_dir)) {
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+    cache_path <- file.path(cache_dir, paste0("stringdb_", cache_type, "_", cache_key, ".rds"))
+    saveRDS(value, cache_path)
+  }
+
+  list(scope_obj = scope_obj)
+}
+
+.stringdb_map_genes_cached <- function(string_db, genes, input_id_type = "gene", scope_obj = NULL, cache_dir = NULL) {
+  genes <- unique(as.character(genes))
+  if (!length(genes)) {
+    return(list(mapping = setNames(character(0), character(0)), cache_hit = FALSE, scope_obj = scope_obj))
+  }
+  gene_hash <- .external_reference_hash(sort(genes))
+  cache_key <- .external_reference_hash(list(
+    species = string_db$species,
+    input_id_type = input_id_type,
+    gene_hash = gene_hash
+  ))
+
+  cache <- .stringdb_cache_get(scope_obj, cache_dir, "mapping", cache_key)
+  if (isTRUE(cache$cache_hit)) {
+    return(list(mapping = cache$value, cache_hit = TRUE, scope_obj = cache$scope_obj))
+  }
+
+  df <- data.frame(stats::setNames(list(genes), input_id_type), stringsAsFactors = FALSE)
+  mapped <- string_db$map(df, input_id_type, removeUnmappedRows = FALSE)
+  mapping <- setNames(mapped$STRING_id, mapped[[input_id_type]])
+
+  cache_put <- .stringdb_cache_put(scope_obj, cache_dir, "mapping", cache_key, mapping)
+  list(mapping = mapping, cache_hit = FALSE, scope_obj = cache_put$scope_obj)
+}
+
+.stringdb_get_interactions_fallback <- function(string_db, ids) {
+  ids <- unique(na.omit(as.character(ids)))
+  if (!length(ids)) {
+    return(data.frame(from = character(0), to = character(0), combined_score = numeric(0)))
+  }
+
+  if (!dir.exists(string_db$input_directory)) {
+    dir.create(string_db$input_directory, recursive = TRUE)
+  }
+  paths <- .stringdb_interaction_paths(string_db)
+  if (file.exists(paths$file_path)) {
+    unlink(paths$file_path)
+  }
+
+  download_fun <- getFromNamespace("downloadAbsentFile", "STRINGdb")
+  temp <- download_fun(paths$url, oD = string_db$input_directory)
+  ppi <- utils::read.table(temp, sep = " ", header = TRUE, stringsAsFactors = FALSE, fill = TRUE)
+
+  required <- c("protein1", "protein2", "combined_score")
+  if (!all(required %in% names(ppi))) {
+    stop("STRINGdb interaction file missing required columns.")
+  }
+  ppi <- ppi[, required, drop = FALSE]
+  keep <- stats::complete.cases(ppi)
+  if (any(!keep)) {
+    ppi <- ppi[keep, , drop = FALSE]
+  }
+  ppi <- ppi[ppi$protein1 %in% ids & ppi$protein2 %in% ids, , drop = FALSE]
+  if (!nrow(ppi)) {
+    return(data.frame(from = character(0), to = character(0), combined_score = numeric(0)))
+  }
+  data.frame(
+    from = ppi$protein1,
+    to = ppi$protein2,
+    combined_score = as.numeric(ppi$combined_score),
+    stringsAsFactors = FALSE
+  )
+}
+
+.stringdb_get_interactions_cached <- function(string_db, string_ids, score_threshold, scope_obj = NULL, cache_dir = NULL) {
+  ids <- unique(na.omit(as.character(string_ids)))
+  if (!length(ids)) {
+    empty <- data.frame(from = character(0), to = character(0), combined_score = numeric(0))
+    return(list(interactions = empty, cache_hit = FALSE, scope_obj = scope_obj))
+  }
+  ids_hash <- .external_reference_hash(sort(ids))
+  cache_key <- .external_reference_hash(list(
+    species = string_db$species,
+    score_threshold = score_threshold,
+    ids_hash = ids_hash
+  ))
+
+  cache <- .stringdb_cache_get(scope_obj, cache_dir, "interactions", cache_key)
+  if (isTRUE(cache$cache_hit)) {
+    return(list(interactions = cache$value, cache_hit = TRUE, scope_obj = cache$scope_obj))
+  }
+
+  interactions <- tryCatch(
+    string_db$get_interactions(ids),
+    error = function(e) {
+      msg <- conditionMessage(e)
+      if (grepl("edge data frame contains NAs", msg) || grepl("graph_from_data_frame", msg)) {
+        return(.stringdb_get_interactions_fallback(string_db, ids))
+      }
+      stop(e)
+    }
+  )
+  if (!is.data.frame(interactions) || !nrow(interactions)) {
+    interactions <- data.frame(from = character(0), to = character(0), combined_score = numeric(0))
+  } else {
+    interactions <- interactions[, c("from", "to", "combined_score"), drop = FALSE]
+  }
+
+  cache_put <- .stringdb_cache_put(scope_obj, cache_dir, "interactions", cache_key, interactions)
+  list(interactions = interactions, cache_hit = FALSE, scope_obj = cache_put$scope_obj)
+}
+
+.stringdb_label_edges <- function(edge_df, gene_to_string, interactions, score_threshold = 700) {
+  edge_df$string_from <- gene_to_string[edge_df$from]
+  edge_df$string_to <- gene_to_string[edge_df$to]
+  comparable <- !is.na(edge_df$string_from) & !is.na(edge_df$string_to)
+
+  if (nrow(interactions)) {
+    key_int <- paste(
+      pmin(interactions$from, interactions$to),
+      pmax(interactions$from, interactions$to),
+      sep = "|"
+    )
+    score_map <- setNames(interactions$combined_score, key_int)
+  } else {
+    score_map <- setNames(numeric(0), character(0))
+  }
+
+  key_edges <- paste(
+    pmin(edge_df$string_from, edge_df$string_to),
+    pmax(edge_df$string_from, edge_df$string_to),
+    sep = "|"
+  )
+  string_score <- score_map[key_edges]
+  string_score[is.na(string_score)] <- 0
+  string_score[!comparable] <- NA_real_
+
+  edge_df$string_score <- as.numeric(string_score)
+  edge_df$label <- ifelse(!is.na(edge_df$string_score), edge_df$string_score >= score_threshold, NA)
+  edge_df
 }
 
 stringdb_subscore_columns <- function() {
@@ -509,9 +665,6 @@ option_list <- list(
   make_option(c("--bench_root"), type = "character", help = "Benchmark output root (contains <method>/repeat_*/edges_all.tsv)"),
   make_option(c("--outdir"), type = "character", help = "Output directory for mapped edges"),
   make_option(c("--methods"), type = "character", default = "genescope,giotto,hotspot"),
-  make_option(c("--genescope_root"), type = "character",
-              default = "/Users/haenolabcho/Documents/Code/geneSCOPE-2025-01-05/geneSCOPE",
-              help = "Path to geneSCOPE source root (optional; falls back to installed geneSCOPE package)."),
   make_option(c("--species"), type = "integer", default = 9606),
   make_option(c("--input_id_type"), type = "character", default = "gene"),
   make_option(c("--string_version"), type = "character", default = "12.0",
@@ -540,14 +693,11 @@ if (is.na(string_version)) stop("Invalid --string_version: ", opt$string_version
 cache_dir <- file.path(opt$outdir, paste0("STRINGdb_cache_v", string_version))
 dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
-score_source <- load_genescope_score(opt$genescope_root)
-patch_env <- if (identical(score_source, "package")) asNamespace("geneSCOPE") else .GlobalEnv
-patch_stringdb_link_data(patch_env)
-
-connect_fn <- get(".stringdb_connect", envir = patch_env)
-map_fn <- get(".stringdb_map_genes_cached", envir = patch_env)
-interactions_fn <- get(".stringdb_get_interactions_cached", envir = patch_env)
-label_fn <- get(".stringdb_label_edges", envir = patch_env)
+score_source <- "standalone"
+connect_fn <- .stringdb_connect
+map_fn <- .stringdb_map_genes_cached
+interactions_fn <- .stringdb_get_interactions_cached
+label_fn <- .stringdb_label_edges
 
 mapped_rows <- list()
 per_method <- list()
@@ -647,7 +797,6 @@ meta <- list(
   string_score_thresholds = thresholds,
   keep_subscores = opt$keep_subscores != 0,
   score_function_source = score_source,
-  genescope_root = if (identical(score_source, "source")) opt$genescope_root else NA_character_,
   outputs = list(
     mapped_edges_tsv = out_tsv,
     cache_dir = cache_dir
