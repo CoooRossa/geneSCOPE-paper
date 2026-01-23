@@ -217,7 +217,11 @@ if (nzchar(coord_file)) {
 cat("[STEP] processGiotto\n", file = stderr()); flush(stderr())
 gobject <- Giotto::processGiotto(
   gobject = gobject,
-  filter_params = list(),
+  filter_params = list(
+    expression_threshold   = 0,
+    feat_det_in_min_cells  = 0,
+    min_det_feats_per_cell = 0
+  ),
   norm_params = list(),
   stat_params = list(),
   adjust_params = NULL,

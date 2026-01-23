@@ -2,21 +2,23 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FULL_DOCKER_DIR="${SCRIPT_DIR}/docker/Full-edges"
-RSCRIPTS_DIR="${SCRIPT_DIR}/Rscripts"
+DOCKER_DIR="${SCRIPT_DIR}/docker"
+RSCRIPTS_DIR="${SCRIPT_DIR}/benchmark-Rscripts"
 
 OUT_ROOT="${SCRIPT_DIR}/final_out"
-BENCH_ROOT="${OUT_ROOT}/for_compare" # mapping.R expects: <bench_root>/<method>/repeat_001/edges_all.tsv (staged from tool outputs all_edges.tsv)
+BENCH_ROOT_DEFAULT="${OUT_ROOT}/for_compare"
+BENCH_ROOT="${BENCH_ROOT:-${BENCH_ROOT_DEFAULT}}" # mapping.R expects: <bench_root>/<method>/repeat_001/edges_all.tsv (staged from tool outputs all_edges.tsv)
 
-OUTS="/path/to/GSE280314_Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE_outs"
-ROI_CSV="/path/to/P5_roi.csv"
+OUTS="${OUTS:-/path/to/GSE280314_Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE_outs}"
+ROI_CSV="${ROI_CSV:-/path/to/P5_roi.csv}"
 ROI_FILENAME="$(basename "${ROI_CSV}")"
 ROI_IN_CONTAINER="/roi/${ROI_FILENAME}"
 
-THREADS=16
-SEED=1
-DATASET_ID="GSE280314_P5"
-ROI_ID="P5_tumor_region"
+THREADS="${THREADS:-16}"
+SEED="${SEED:-${seed:-1}}"
+DATASET_ID="${DATASET_ID:-GSE280314_P5}"
+ROI_ID="${ROI_ID:-P5_tumor_region}"
+N_RUNS="${N_RUNS:-5}"
 
 die() { echo "[ERROR] $*" >&2; exit 1; }
 info() { echo "[INFO] $*" >&2; }
@@ -30,13 +32,17 @@ fi
 
 ROI_HOST_DIR="$(cd "$(dirname "${ROI_CSV}")" && pwd)"
 
+if ! [[ "${N_RUNS}" =~ ^[0-9]+$ ]] || [[ "${N_RUNS}" -lt 1 ]]; then
+  die "N_RUNS must be a positive integer (got: ${N_RUNS})"
+fi
+
 mkdir -p "${OUT_ROOT}" "${BENCH_ROOT}"
 
 # ---- build docker images ----
-docker build -t giotto:bench "${FULL_DOCKER_DIR}/giotto_grid"
-docker build -t hotspot:bench "${FULL_DOCKER_DIR}/hotspot"
-docker build -t seagal:bench "${FULL_DOCKER_DIR}/seagal"
-docker build -t genescope:bench "${FULL_DOCKER_DIR}/genescope"
+docker build -t giotto:bench "${DOCKER_DIR}/giotto_grid"
+docker build -t hotspot:bench "${DOCKER_DIR}/hotspot"
+docker build -t seagal:bench "${DOCKER_DIR}/seagal"
+docker build -t genescope:bench "${DOCKER_DIR}/genescope"
 
 # ---- output dirs (non-alledges = module clustering; alledges = full edges) ----
 GENESCOPE_OUT="${OUT_ROOT}/genescope"
@@ -49,33 +55,49 @@ SEAGAL_ALLEDGES_OUT="${OUT_ROOT}/seagal-alledges"
 
 mkdir -p "${HOTSPOT_OUT}" "${HOTSPOT_ALLEDGES_OUT}" "${GENESCOPE_OUT}" "${GIOTTO_OUT}" "${GIOTTO_ALLEDGES_OUT}" "${SEAGAL_OUT}" "${SEAGAL_ALLEDGES_OUT}"
 
-# ---- Hotspot: non-alledges for modules five runs (modules + runtime) --------
-docker run --rm -u "$(id -u):$(id -g)" \
-  -v "${OUTS}:/data:ro" \
-  -v "${ROI_HOST_DIR}:/roi:ro" \
-  -v "${HOTSPOT_OUT}:/out" \
-  hotspot:final \
-  --data_dir /data \
-  --coord_file "${ROI_IN_CONTAINER}" \
-  --outdir /out \
-  --threads "${THREADS}" \
-  --repeat 5 \
-  --seed "${SEED}" \
-  --dataset_id "${DATASET_ID}" \
-  --roi_id "${ROI_ID}" \
-  --core_only 1
+# ---- Hotspot: non-alledges for modules five runs (modules + runtime) ----
+for ((r=1; r<=N_RUNS; r++)); do
+  REP_NAME="$(printf 'repeat_%03d' "${r}")"
+  TMP_OUT="${HOTSPOT_OUT}/.tmp_${REP_NAME}"
+  rm -rf "${TMP_OUT}"
+  mkdir -p "${TMP_OUT}"
+
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    -e XDG_CACHE_HOME=/tmp/.cache \
+    -v "${OUTS}:/data:ro" \
+    -v "${ROI_HOST_DIR}:/roi:ro" \
+    -v "${TMP_OUT}:/out" \
+    hotspot:bench \
+    --data_dir /data \
+    --coord_file "${ROI_IN_CONTAINER}" \
+    --outdir /out \
+    --threads "${THREADS}" \
+    --repeat 1 \
+    --sample_sec 1 \
+    --seed "${SEED}" \
+    --dataset_id "${DATASET_ID}" \
+    --roi_id "${ROI_ID}" \
+    --core_only 1
+
+  rm -rf "${HOTSPOT_OUT:?}/${REP_NAME}"
+  mv "${TMP_OUT}/repeat_001" "${HOTSPOT_OUT}/${REP_NAME}"
+  rm -rf "${TMP_OUT}"
+done
 
 # ---- Hotspot: alledges for full edges ----
 docker run --rm -u "$(id -u):$(id -g)" \
   -v "${OUTS}:/data:ro" \
   -v "${ROI_HOST_DIR}:/roi:ro" \
   -v "${HOTSPOT_ALLEDGES_OUT}:/out" \
-  hotspot:final \
+  hotspot:bench \
   --data_dir /data \
   --coord_file "${ROI_IN_CONTAINER}" \
   --outdir /out \
   --threads "${THREADS}" \
   --repeat 1 \
+  --sample_sec 0 \
   --seed "${SEED}" \
   --dataset_id "${DATASET_ID}" \
   --roi_id "${ROI_ID}" \
@@ -83,7 +105,7 @@ docker run --rm -u "$(id -u):$(id -g)" \
   --core_only 0
 
 # ---- geneSCOPE: five runs (edges + modules + runtime) ----
-for r in 1 2 3 4 5; do
+for ((r=1; r<=N_RUNS; r++)); do
   REP_NAME="$(printf 'repeat_%03d' "${r}")"
   TMP_OUT="${GENESCOPE_OUT}/.tmp_${REP_NAME}"
   rm -rf "${TMP_OUT}"
@@ -96,7 +118,7 @@ for r in 1 2 3 4 5; do
     -v "${OUTS}:/data:ro" \
     -v "${ROI_HOST_DIR}:/roi:ro" \
     -v "${TMP_OUT}:/out" \
-    genescope:final \
+    genescope:bench \
     --data_dir /data \
     --coord_file "${ROI_IN_CONTAINER}" \
     --outdir /out \
@@ -126,7 +148,7 @@ docker run --rm \
   -v "${OUTS}:/data:ro" \
   -v "${ROI_HOST_DIR}:/roi:ro" \
   -v "${GIOTTO_ALLEDGES_OUT}:/out" \
-  giotto:final \
+  giotto:bench \
   --data_dir /data \
   --coord_file "${ROI_IN_CONTAINER}" \
   --outdir /out \
@@ -138,7 +160,7 @@ docker run --rm \
   --roi_flip_y --n_corr_genes 422
 
 # ---- Giotto: non-alledges for modules five runs (modules + runtime)----
-for r in 1 2 3 4 5; do
+for ((r=1; r<=N_RUNS; r++)); do
   REP_NAME="$(printf 'repeat_%03d' "${r}")"
   TMP_OUT="${GIOTTO_OUT}/.tmp_${REP_NAME}"
   rm -rf "${TMP_OUT}"
@@ -151,7 +173,7 @@ for r in 1 2 3 4 5; do
     -v "${OUTS}:/data:ro" \
     -v "${ROI_HOST_DIR}:/roi:ro" \
     -v "${TMP_OUT}:/out:rw" \
-    giotto:final \
+    giotto:bench \
     --data_dir /data \
     --coord_file "${ROI_IN_CONTAINER}" \
     --outdir /out \
@@ -179,13 +201,13 @@ docker run --rm \
   -v "${OUTS}:/data:ro" \
   -v "${ROI_HOST_DIR}:/roi:ro" \
   -v "${SEAGAL_OUT}:/out" \
-  seagal:final \
+  seagal:bench \
   --data_dir /data \
   --coord_file "${ROI_IN_CONTAINER}" \
   --outdir /out \
   --ncores "${THREADS}" \
   --seed "${SEED}" \
-  --repeat 5 \
+  --repeat "${N_RUNS}" \
   --sample_sec 1 \
   --max_cells 0 \
   --grid_um 30 \
@@ -200,7 +222,7 @@ docker run --rm \
   -v "${OUTS}:/data:ro" \
   -v "${ROI_HOST_DIR}:/roi:ro" \
   -v "${SEAGAL_ALLEDGES_OUT}:/out" \
-  seagal:final \
+  seagal:bench \
   --data_dir /data \
   --coord_file "${ROI_IN_CONTAINER}" \
   --outdir /out \
@@ -287,7 +309,7 @@ Rscript "${RSCRIPTS_DIR}/mapping.R" \
 
 Rscript "${RSCRIPTS_DIR}/edge-level.R" \
   --map_dir "${OUT_ROOT}/string1step" \
-  --outdir "${OUT_ROOT}/precision_and_recall" \
+  --outdir "${OUT_ROOT}/edge-level" \
   --methods "genescope,giotto,hotspot,seagal" \
   --pr_top_n_list "10,30,50,100,1000" \
   --edge_fdr_by_method "1,1,1,1" \
@@ -295,7 +317,7 @@ Rscript "${RSCRIPTS_DIR}/edge-level.R" \
 
 Rscript "${RSCRIPTS_DIR}/module-level.R" \
   --map_dir "${OUT_ROOT}/string1step" \
-  --outdir "${OUT_ROOT}/anchor-null2" \
+  --outdir "${OUT_ROOT}/module-level" \
   --methods "genescope,giotto,hotspot,seagal" \
   --modules_tsv_by_method "${BENCH_ROOT}/genescope/repeat_001/modules.tsv,${BENCH_ROOT}/giotto/repeat_001/modules.tsv,${BENCH_ROOT}/hotspot/repeat_001/modules.tsv,${BENCH_ROOT}/seagal/repeat_001/modules.tsv" \
   --min_module_genes 3 \
@@ -385,4 +407,4 @@ copy_seagal_runtime "${RT_SRC_SEAGAL}" "${RUNTIME_RUN_ROOT}/seagal"
 Rscript "${RSCRIPTS_DIR}/runtime-panels.R" \
   --run_root "${RUNTIME_RUN_ROOT}" \
   --outdir "${RUNTIME_PLOTS_OUT}" \
-  --n_runs 5
+  --n_runs "${N_RUNS}"

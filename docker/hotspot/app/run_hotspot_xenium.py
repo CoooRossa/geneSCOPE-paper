@@ -3,6 +3,9 @@
 
 import argparse
 import os
+import atexit
+import subprocess
+import sys
 
 import hotspot
 import numpy as np
@@ -15,7 +18,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=(
             "Hotspot v1+ minimal spatial workflow (AnnData route). "
-            "Writes only modules.tsv and all_edges.tsv."
+            "Writes modules.tsv and all_edges.tsv (and stats.tsv when --sample_sec is non-zero)."
         )
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
@@ -42,6 +45,7 @@ if __name__ == "__main__":
     parser.add_argument("--min_gene_threshold", type=int, default=20)
     parser.add_argument("--core_only", nargs="?", const="1", default="1")
     parser.add_argument("--stats_file", type=str, default="")
+    parser.add_argument("--sample_sec", type=int, default=1)
 
     args = parser.parse_args()
 
@@ -56,6 +60,100 @@ if __name__ == "__main__":
     os.makedirs(repdir, exist_ok=True)
     module_path = os.path.join(repdir, "modules.tsv")
     edges_path = os.path.join(repdir, "all_edges.tsv")
+
+    try:
+        sample_sec = int(getattr(args, "sample_sec", 0) or 0)
+    except Exception:
+        sample_sec = 0
+
+    stats_file = str(getattr(args, "stats_file", "") or "").strip()
+    if not stats_file:
+        stats_file = os.path.join(repdir, "stats.tsv")
+
+    if sample_sec > 0:
+        monitor_code = r"""
+import os
+import sys
+import time
+
+out = sys.argv[1]
+sample_sec = int(sys.argv[2])
+if sample_sec <= 0:
+    raise SystemExit(0)
+
+os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+
+start = time.time()
+need_header = (not os.path.exists(out)) or (os.path.getsize(out) == 0)
+with open(out, "a", encoding="utf-8") as f:
+    if need_header:
+        f.write("t_sec\tcpu_usage_usec\tmem_bytes\n")
+        f.flush()
+
+    while True:
+        t_sec = int(time.time() - start)
+
+        cpu_usec = ""
+        try:
+            with open("/sys/fs/cgroup/cpu.stat", "r", encoding="utf-8") as c:
+                for line in c:
+                    if line.startswith("usage_usec "):
+                        parts = line.strip().split()
+                        if len(parts) >= 2:
+                            cpu_usec = parts[1]
+                        break
+        except Exception:
+            cpu_usec = ""
+
+        if not cpu_usec:
+            try:
+                with open("/sys/fs/cgroup/cpuacct/cpuacct.usage", "r", encoding="utf-8") as c:
+                    ns = c.read().strip()
+                if ns.isdigit():
+                    cpu_usec = str(int(int(ns) / 1000))
+            except Exception:
+                cpu_usec = ""
+
+        mem_bytes = ""
+        try:
+            with open("/sys/fs/cgroup/memory.current", "r", encoding="utf-8") as m:
+                mem_bytes = m.read().strip()
+        except Exception:
+            mem_bytes = ""
+
+        if not mem_bytes:
+            try:
+                with open("/sys/fs/cgroup/memory/memory.usage_in_bytes", "r", encoding="utf-8") as m:
+                    mem_bytes = m.read().strip()
+            except Exception:
+                mem_bytes = ""
+
+        f.write(f"{t_sec}\t{cpu_usec}\t{mem_bytes}\n")
+        f.flush()
+        time.sleep(sample_sec)
+"""
+        try:
+            if os.path.exists(stats_file):
+                os.remove(stats_file)
+        except OSError:
+            pass
+
+        mon = subprocess.Popen([sys.executable, "-c", monitor_code, stats_file, str(sample_sec)])
+
+        def _stop_monitor(p=mon):
+            try:
+                if p is None:
+                    return
+                if p.poll() is None:
+                    p.terminate()
+                    p.wait(timeout=2)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+
+        atexit.register(_stop_monitor)
 
     src_h5ad = args.h5ad
     src_outs = args.xenium_outs
