@@ -255,6 +255,11 @@ paper_rename_details_cols <- function(dt) {
 filter_edges_for_scoring <- function(edges_all, fdr_threshold, positive_only) {
   edges_all <- as.data.table(edges_all)
   if (!nrow(edges_all)) return(edges_all)
+  if (!"fdr" %in% names(edges_all)) {
+    out <- edges_all[is.finite(weight)]
+    if (isTRUE(positive_only)) out <- out[weight > 0]
+    return(out)
+  }
   if (isTRUE(positive_only)) {
     edges_all[is.finite(fdr) & fdr < fdr_threshold & is.finite(weight) & weight > 0]
   } else {
@@ -1568,11 +1573,12 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
   for (method_key in methods) {
     method_i <- method_i + 1L
     method_progress(method_i, detail = paste0("method=", method_key))
-    required <- c("from", "to", "weight", "fdr", "string_score")
+    required <- c("from", "to", "weight", "string_score")
     missing <- setdiff(required, names(mapped_dt))
     if (length(missing)) stop("Mapped edges file missing columns: ", paste(missing, collapse = ", "))
     subscore_cols <- c("nscore", "fscore", "pscore", "ascore", "escore", "dscore", "tscore")
-    cols_use <- c("from", "to", "weight", "fdr")
+    cols_use <- c("from", "to", "weight")
+    if ("fdr" %in% names(mapped_dt)) cols_use <- c(cols_use, "fdr")
     if ("string_from" %in% names(mapped_dt)) cols_use <- c(cols_use, "string_from")
     if ("string_to" %in% names(mapped_dt)) cols_use <- c(cols_use, "string_to")
     cols_use <- c(cols_use, "string_score", intersect(subscore_cols, names(mapped_dt)))
@@ -1580,7 +1586,11 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
     if (!nrow(dt)) stop("No mapped edges for method=", method_key, " in ", mapped_tsv)
     if (!"string_from" %in% names(dt)) dt[, string_from := NA_character_]
     if (!"string_to" %in% names(dt)) dt[, string_to := NA_character_]
-    data.table::setcolorder(dt, c("from", "to", "weight", "fdr", "string_from", "string_to", "string_score", intersect(subscore_cols, names(dt))))
+    if (!"fdr" %in% names(dt)) dt[, fdr := NA_real_]
+    data.table::setcolorder(
+      dt,
+      c("from", "to", "weight", "fdr", "string_from", "string_to", "string_score", intersect(subscore_cols, names(dt)))
+    )
     if (!is.character(dt$from)) dt[, from := as.character(from)]
     if (!is.character(dt$to)) dt[, to := as.character(to)]
     if (!is.character(dt$string_from)) dt[, string_from := as.character(string_from)]
@@ -1612,7 +1622,20 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
       stop("Invalid FDR threshold for method=", method_key, ": ", fdr_threshold)
     }
 
-    fdr_filtering_enabled <- is.finite(fdr_threshold) && fdr_threshold > 0 && fdr_threshold < 1
+    fdr_filtering_requested <- is.finite(fdr_threshold) && fdr_threshold > 0 && fdr_threshold < 1
+    fdr_available <- any(is.finite(dt$fdr))
+    fdr_threshold_effective <- fdr_threshold
+    if (isTRUE(fdr_filtering_requested) && !isTRUE(fdr_available)) {
+      message(sprintf(
+        "[WARN] method=%s: fdr threshold requested (%.3g) but fdr column is missing/NA; skipping FDR filter.",
+        method_key,
+        as.numeric(fdr_threshold)
+      ))
+      fdr_threshold_effective <- NA_real_
+    }
+    fdr_filtering_enabled <- is.finite(fdr_threshold_effective) &&
+      fdr_threshold_effective > 0 &&
+      fdr_threshold_effective < 1
     # Truth universe for FN/recall: all edges (positive or negative weights), regardless of FDR.
     # Predicted positives are still restricted by the positive pool (positive weights + optional FDR filter).
     total_true_universe <- dt[
@@ -1621,7 +1644,7 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
     ]
 
     edges_sig <- if (isTRUE(fdr_filtering_enabled)) {
-      filter_edges_for_scoring(dt, fdr_threshold, positive_only)
+      filter_edges_for_scoring(dt, fdr_threshold_effective, positive_only)
     } else {
       out <- dt[is.finite(weight)]
       if (isTRUE(positive_only)) out <- out[weight > 0]
@@ -1632,7 +1655,7 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
       bench_meta = bench_meta,
       bg = bg,
       string_version = string_version,
-      fdr_threshold = fdr_threshold,
+      fdr_threshold = fdr_threshold_effective,
       fdr_filtering_enabled = isTRUE(fdr_filtering_enabled),
       total_true_universe = as.integer(total_true_universe),
       n_edges_all = nrow(dt),

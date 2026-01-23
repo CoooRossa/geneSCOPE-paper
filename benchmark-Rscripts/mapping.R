@@ -78,7 +78,7 @@ safe_fread_edges_tsv <- function(path) {
 
 read_edges_all <- function(path) {
   edges <- safe_fread_edges_tsv(path)
-  required <- c("gene_a", "gene_b", "weight", "fdr")
+  required <- c("gene_a", "gene_b", "weight")
   missing <- setdiff(required, names(edges))
   if (length(missing)) {
     stop("Missing columns in edges file ", path, ": ", paste(missing, collapse = ", "))
@@ -89,14 +89,15 @@ read_edges_all <- function(path) {
   }
   edges <- edges[!is.na(gene_a) & !is.na(gene_b)]
   edges <- edges[nzchar(as.character(gene_a)) & nzchar(as.character(gene_b))]
+  has_fdr <- "fdr" %in% names(edges)
   edges <- edges[, .(
     gene_a = as.character(gene_a),
     gene_b = as.character(gene_b),
     weight = suppressWarnings(as.numeric(weight)),
-    fdr = suppressWarnings(as.numeric(fdr))
+    fdr = if (has_fdr) suppressWarnings(as.numeric(fdr)) else NA_real_
   )]
   edges <- edges[gene_a != gene_b]
-  edges <- edges[is.finite(weight) & is.finite(fdr)]
+  edges <- edges[is.finite(weight)]
   edges
 }
 
