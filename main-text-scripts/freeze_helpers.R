@@ -942,11 +942,10 @@ write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
         c("geneSCOPE", "arrow", "future", "ggplot2", "ggraph", "igraph",
           "s2", "sf", "spdep"),
         function(package) {
-          if (requireNamespace(package, quietly = TRUE)) {
-            as.character(utils::packageVersion(package))
-          } else {
-            NA_character_
-          }
+          suppressWarnings(tryCatch(
+            as.character(utils::packageVersion(package)),
+            error = function(...) NA_character_
+          ))
         }, character(1L)
       ))
     ),
