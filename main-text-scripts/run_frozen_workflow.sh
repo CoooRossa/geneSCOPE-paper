@@ -56,6 +56,8 @@ fi
 prepare_frozen_genescope "${WORKFLOW_OUTPUT}"
 Rscript --vanilla "${PAPER_ROOT}/docker/genescope/freeze_assertions.R" 1.0.2
 Rscript --vanilla "${WORKFLOW_SCRIPT}"
+Rscript --vanilla "${PAPER_ROOT}/correction-analysis/verify_figure_bundle.R" \
+  "${WORKFLOW_OUTPUT}" "${SAMPLE_ID}"
 mv "${WORKFLOW_OUTPUT}" "${FINAL_WORKFLOW_OUTPUT}"
 WORKFLOW_OUTPUT=""
 trap - EXIT

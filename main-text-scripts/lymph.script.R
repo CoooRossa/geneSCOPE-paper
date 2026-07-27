@@ -443,6 +443,18 @@ ggsave(
   dpi = 600
 )
 
+output_gate <- assert_required_figure_outputs(
+  output_root, "LN",
+  required_relative = c(
+    "LvsR/LvsR_grid30.png",
+    file.path(network_dir, paste0("network_", cluster_col, ".png")),
+    file.path(network_dir, paste0("dendro_network_", cluster_col, ".png")),
+    file.path(grid_dir, paste0("grid", grid_um, "_boundary.png")),
+    "LN_top_pairs_all.tsv", "LN_top_pairs_display_filter.tsv", "LN_Top6.tsv"
+  ),
+  expected_png_count = 8L
+)
+
 write_freeze_output_manifest(
   output_root, "LN", freeze_source, gate_max_abs_L_diff, membership_gate,
   input_dir = Lymph.path,
@@ -455,5 +467,6 @@ write_freeze_output_manifest(
     delta_adjustment = "BH_universe",
     display_filter = list(q_Delta = "<0.05", L = ">0", r = "<0.05",
                           pct1 = ">20", pct2 = ">20")
-  )
+  ),
+  output_gate = output_gate
 )

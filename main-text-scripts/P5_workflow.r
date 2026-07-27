@@ -234,6 +234,16 @@ dendro_out <- plotDendroNetwork(
   title = " ",
   tree_mode = "radial"
 )
+audit_p5_dendrogram_path(
+  dnet_obj = dendro_out,
+  genes = rownames(P5.coord@meta.data),
+  raw_membership = P5.coord@meta.data[[paste0(cluster_col, "_raw")]],
+  display_mapping = display_mapping,
+  reference_path = file.path(
+    script_dir, "..", "correction-analysis", "reference_p5_dendro_path.tsv"
+  ),
+  output_path = file.path(output_root, "P5_dendro_path_audit.tsv")
+)
 p_dendro_network <- if (inherits(dendro_out, "ggplot")) {
   dendro_out
 } else if (is.list(dendro_out) && inherits(dendro_out$plot, "ggplot")) {
@@ -618,6 +628,21 @@ ggsave(
   dpi = 600
 )
 
+output_gate <- assert_required_figure_outputs(
+  output_root, "P5",
+  required_relative = c(
+    "LvsR/LvsR_grid30.png",
+    file.path(network_dir, paste0("network_", cluster_col, ".png")),
+    file.path(network_dir, paste0("dendro_network_", cluster_col, ".png")),
+    file.path(grid_dir, paste0("grid", grid_um, "_boundary.png")),
+    out_file,
+    file.path(idelta_dir, paste0(cluster_col, "_idelta_by_cluster.png")),
+    "P5_top_pairs_all.tsv", "P5_top_pairs_display_filter.tsv", "P5_Top6.tsv",
+    "P5_dendro_path_audit.tsv"
+  ),
+  expected_png_count = length(cluster_genes) + 30L
+)
+
 write_freeze_output_manifest(
   output_root, "P5", freeze_source, gate_max_abs_L_diff, membership_gate,
   input_dir = P5.path,
@@ -630,5 +655,6 @@ write_freeze_output_manifest(
     delta_adjustment = "BH_universe",
     display_filter = list(q_Delta = "<0.05", L = ">0", r = "<0.05",
                           pct1 = ">20", pct2 = ">20")
-  )
+  ),
+  output_gate = output_gate
 )

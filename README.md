@@ -164,8 +164,8 @@ bash main-text-scripts/run_frozen_workflow.sh LN
 ```
 
 These entry points require a clean paper commit, generate in a new staging
-directory, record raw-input/ROI/mapping/workflow hashes, and publish the figure
-directory only after the complete workflow succeeds.
+directory, record raw-input/ROI/mapping/workflow hashes, verify the complete
+bundle, and publish the figure directory only after every freeze gate succeeds.
 
 ## Outputs
 

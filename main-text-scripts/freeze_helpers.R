@@ -245,11 +245,175 @@ assert_reference_top6 <- function(script_dir, sample_id, x) {
   invisible(observed_key)
 }
 
+audit_p5_dendrogram_path <- function(dnet_obj, genes, raw_membership,
+                                     display_mapping, reference_path,
+                                     output_path) {
+  if (!requireNamespace("igraph", quietly = TRUE)) {
+    stop("igraph is required for the P5 dendrogram-path freeze gate.")
+  }
+  graph <- if (is.list(dnet_obj)) dnet_obj$graph else NULL
+  if (is.null(graph) || !inherits(graph, "igraph") ||
+      !igraph::is_connected(graph) || !igraph::is_tree(graph)) {
+    stop("P5 dendrogram-path freeze gate requires one connected igraph tree.")
+  }
+
+  genes <- as.character(genes)
+  raw_membership <- as.character(raw_membership)
+  if (length(genes) != length(raw_membership) || anyNA(genes) ||
+      any(!nzchar(genes)) || anyDuplicated(genes)) {
+    stop("Invalid gene membership supplied to the P5 dendrogram-path gate.")
+  }
+  gene_module <- stats::setNames(raw_membership, genes)
+  endpoints <- igraph::as_data_frame(graph, what = "edges")
+  endpoints$module_from <- unname(gene_module[endpoints$from])
+  endpoints$module_to <- unname(gene_module[endpoints$to])
+  cross <- endpoints[
+    !is.na(endpoints$module_from) & nzchar(endpoints$module_from) &
+      endpoints$module_from != "-1" &
+      !is.na(endpoints$module_to) & nzchar(endpoints$module_to) &
+      endpoints$module_to != "-1" &
+      endpoints$module_from != endpoints$module_to,
+    c("module_from", "module_to"), drop = FALSE
+  ]
+  if (!nrow(cross)) stop("P5 dendrogram has no between-module edges.")
+  cross$key <- apply(cross, 1L, function(z) paste(sort(z), collapse = "--"))
+  cross <- cross[!duplicated(cross$key), , drop = FALSE]
+  module_edges <- do.call(rbind, strsplit(cross$key, "--", fixed = TRUE))
+  module_graph <- igraph::graph_from_data_frame(
+    data.frame(from = module_edges[, 1L], to = module_edges[, 2L]),
+    directed = FALSE
+  )
+
+  start_module <- unname(gene_module[["C3"]])
+  end_module <- unname(gene_module[["GPX2"]])
+  if (is.null(start_module) || is.null(end_module) ||
+      anyNA(c(start_module, end_module))) {
+    stop("C3 or GPX2 is absent from the P5 membership.")
+  }
+  module_path <- names(igraph::shortest_paths(
+    module_graph, from = start_module, to = end_module
+  )$vpath[[1L]])
+  if (!length(module_path)) stop("No C3-to-GPX2 module path was found.")
+
+  path_result <- getDendroWalkPaths(
+    dnet_obj, gene = "C3", gene2 = "GPX2", cutoff = 20L,
+    max_paths = 50000L, verbose = FALSE
+  )
+  endpoint_paths <- Filter(function(path) {
+    if (length(path) < 2L) return(FALSE)
+    ends <- c(path[[1L]], path[[length(path)]])
+    identical(ends, c("C3", "GPX2")) || identical(ends, c("GPX2", "C3"))
+  }, path_result$paths)
+  if (length(endpoint_paths) != 1L) {
+    stop("Expected one C3--GPX2 dendrogram path; found ", length(endpoint_paths), ".")
+  }
+  gene_path <- endpoint_paths[[1L]]
+  if (!identical(gene_path[[1L]], "C3")) gene_path <- rev(gene_path)
+
+  display_lookup <- stats::setNames(
+    as.character(display_mapping$display_module),
+    as.character(display_mapping$current_module)
+  )
+  display_path <- unname(display_lookup[module_path])
+  if (anyNA(display_path)) stop("P5 dendrogram path contains an unmapped module.")
+  raw_path_string <- paste(module_path, collapse = "->")
+  display_path_string <- paste(display_path, collapse = "->")
+  internal_display <- if (length(display_path) > 2L) {
+    display_path[seq.int(2L, length(display_path) - 1L)]
+  } else {
+    character()
+  }
+  broad_module <- display_path[[length(display_path)]]
+  consecutive <- if (length(display_path) > 1L) {
+    paste(display_path[-length(display_path)], display_path[-1L], sep = "--")
+  } else {
+    character()
+  }
+  direct_stem_to_broad <- any(consecutive %in% c(
+    paste("3", broad_module, sep = "--"),
+    paste(broad_module, "3", sep = "--")
+  ))
+  observed <- data.frame(
+    gene_query = "C3--GPX2",
+    gene_path = paste(gene_path, collapse = "->"),
+    raw_module_path = raw_path_string,
+    display_module_path = display_path_string,
+    stem_positioned_between = "3" %in% internal_display,
+    direct_stem_to_broad_adjacency = direct_stem_to_broad,
+    enumerated_paths_cutoff20 = length(path_result$paths),
+    stringsAsFactors = FALSE
+  )
+
+  reference <- utils::read.delim(reference_path, stringsAsFactors = FALSE,
+                                 check.names = FALSE)
+  if (nrow(reference) != 1L ||
+      !identical(observed$gene_query[[1L]], reference$gene_query[[1L]]) ||
+      !identical(observed$raw_module_path[[1L]], reference$raw_module_path[[1L]]) ||
+      !identical(observed$display_module_path[[1L]], reference$display_module_path[[1L]]) ||
+      !identical(observed$stem_positioned_between[[1L]],
+                 as.logical(reference$stem_positioned_between[[1L]])) ||
+      !identical(observed$direct_stem_to_broad_adjacency[[1L]],
+                 as.logical(reference$direct_stem_to_broad_adjacency[[1L]]))) {
+    stop(
+      "P5 dendrogram-path freeze gate failed: raw=", raw_path_string,
+      "; display=", display_path_string,
+      "; gene_path=", observed$gene_path[[1L]]
+    )
+  }
+  utils::write.table(observed, output_path, sep = "\t", row.names = FALSE,
+                     quote = FALSE)
+  invisible(observed)
+}
+
+assert_required_figure_outputs <- function(output_root, sample_id,
+                                           required_relative,
+                                           expected_png_count) {
+  output_root <- normalizePath(output_root, mustWork = TRUE)
+  required_relative <- unique(as.character(required_relative))
+  required <- file.path(output_root, required_relative)
+  missing <- required[!file.exists(required) | dir.exists(required)]
+  if (length(missing)) {
+    stop(sample_id, " figure bundle is missing required outputs: ",
+         paste(basename(missing), collapse = ", "))
+  }
+  sizes <- file.info(required)$size
+  if (anyNA(sizes) || any(sizes <= 0)) {
+    stop(sample_id, " figure bundle contains an empty required output.")
+  }
+
+  files <- list.files(output_root, recursive = TRUE, full.names = TRUE)
+  files <- files[file.exists(files) & !dir.exists(files)]
+  relative <- substring(files, nchar(output_root) + 2L)
+  keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library/", relative)
+  files <- files[keep]
+  relative <- relative[keep]
+  png_files <- files[grepl("\\.png$", relative, ignore.case = TRUE)]
+  if (length(png_files) != as.integer(expected_png_count)) {
+    stop(sample_id, " figure bundle PNG count changed: observed=",
+         length(png_files), ", expected=", expected_png_count)
+  }
+  png_ok <- vapply(png_files, function(path) {
+    size <- file.info(path)$size
+    if (is.na(size) || size < 1000) return(FALSE)
+    signature <- readBin(path, what = "raw", n = 8L)
+    identical(as.integer(signature), c(137L, 80L, 78L, 71L, 13L, 10L, 26L, 10L))
+  }, logical(1L))
+  if (!all(png_ok)) {
+    stop(sample_id, " figure bundle contains an invalid PNG: ",
+         paste(basename(png_files[!png_ok]), collapse = ", "))
+  }
+  invisible(list(
+    required_files = required_relative,
+    expected_png_count = as.integer(expected_png_count),
+    observed_png_count = length(png_files)
+  ))
+}
+
 write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
                                          formula_gate, membership_gate,
                                          input_dir, roi_file,
                                          display_mapping_path, workflow_path,
-                                         parameters) {
+                                         parameters, output_gate) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     stop("jsonlite is required to write the figure freeze manifest.")
   }
@@ -294,7 +458,24 @@ write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
     workflow = list(path = workflow_path, sha256 = sha256_file(workflow_path)),
     gate_max_abs_L_diff = formula_gate,
     membership = membership_gate,
+    output_gate = output_gate,
     parameters = parameters,
+    runtime = list(
+      R_version = R.version.string,
+      platform = R.version$platform,
+      R_executable = file.path(R.home("bin"), "R"),
+      packages = as.list(vapply(
+        c("geneSCOPE", "arrow", "future", "ggplot2", "ggraph", "igraph",
+          "s2", "sf", "spdep"),
+        function(package) {
+          if (requireNamespace(package, quietly = TRUE)) {
+            as.character(utils::packageVersion(package))
+          } else {
+            NA_character_
+          }
+        }, character(1L)
+      ))
+    ),
     inputs = list(
       xenium_outs = input_dir,
       roi_file = roi_file,
