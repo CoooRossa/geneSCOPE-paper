@@ -67,6 +67,36 @@ sha256_text <- function(text) {
   sha256_file(path)
 }
 
+bundle_file_inventory <- function(output_root, manifest_path = NULL) {
+  output_root <- normalizePath(output_root, mustWork = TRUE)
+  entries <- list.files(
+    output_root, recursive = TRUE, full.names = TRUE,
+    all.files = TRUE, no.. = TRUE, include.dirs = TRUE
+  )
+  relative <- substring(entries, nchar(output_root) + 2L)
+  keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library(/|$)", relative)
+  entries <- entries[keep]
+  relative <- relative[keep]
+  symbolic_links <- nzchar(Sys.readlink(entries))
+  if (any(symbolic_links)) {
+    stop("Figure bundle contains symbolic-link outputs: ",
+         paste(relative[symbolic_links], collapse = ", "))
+  }
+  keep <- file.exists(entries) & !dir.exists(entries)
+  entries <- entries[keep]
+  relative <- relative[keep]
+  if (!is.null(manifest_path)) {
+    manifest_relative <- substring(
+      normalizePath(manifest_path, mustWork = FALSE), nchar(output_root) + 2L
+    )
+    keep <- relative != manifest_relative
+    entries <- entries[keep]
+    relative <- relative[keep]
+  }
+  ord <- order(relative, method = "radix")
+  list(files = entries[ord], relative = relative[ord])
+}
+
 reference_table_dir <- function(script_dir) {
   candidates <- unique(c(
     script_dir,
@@ -409,9 +439,118 @@ assert_scope_pair_table <- function(scope_obj, pairs, sample_id,
   ))
 }
 
+generator_call_name <- function(call) {
+  if (!is.call(call) || !length(call)) return(NA_character_)
+  head <- call[[1L]]
+  if (is.symbol(head)) return(as.character(head))
+  if (is.call(head) && length(head) == 3L &&
+      as.character(head[[1L]]) %in% c("::", ":::")) {
+    return(as.character(head[[3L]]))
+  }
+  NA_character_
+}
+
+collect_generator_calls <- function(node, target) {
+  found <- list()
+  if (is.call(node)) {
+    if (identical(generator_call_name(node), target)) found <- list(node)
+    for (index in seq_along(node)[-1L]) {
+      if (is.symbol(node[[index]]) && !nzchar(as.character(node[[index]]))) next
+      found <- c(found, collect_generator_calls(node[[index]], target))
+    }
+  } else if (is.expression(node) || is.pairlist(node) ||
+             (is.list(node) && !is.object(node))) {
+    for (index in seq_along(node)) {
+      if (is.symbol(node[[index]]) && !nzchar(as.character(node[[index]]))) next
+      found <- c(found, collect_generator_calls(node[[index]], target))
+    }
+  }
+  found
+}
+
+generator_argument <- function(call, name) {
+  args <- as.list(call)[-1L]
+  hit <- which(names(args) == name)
+  if (length(hit) != 1L) return(NA_character_)
+  gsub("[[:space:]]+", "", paste(deparse(args[[hit]]), collapse = ""))
+}
+
+assert_generator_provenance <- function(sample_id, generator_path,
+                                        top_pair_rows) {
+  generator_path <- normalizePath(generator_path, mustWork = TRUE)
+  parsed <- parse(generator_path, keep.source = FALSE)
+  top_calls <- collect_generator_calls(parsed, "getTopLvsR")
+  if (length(top_calls) != 1L) {
+    stop(sample_id, " generator must contain exactly one getTopLvsR call.")
+  }
+  top_call <- top_calls[[1L]]
+  common_ok <- identical(generator_argument(top_call, "use_blocks"), "FALSE") &&
+    identical(generator_argument(top_call, "direction"), '"largest"') &&
+    identical(generator_argument(top_call, "pval_mode"), '"uniform"')
+  if (!isTRUE(common_ok)) {
+    stop(sample_id, " generator does not declare the frozen shuffle contract.")
+  }
+
+  assignments <- collect_generator_calls(parsed, "<-")
+  seed_assignment_ok <- any(vapply(assignments, function(call) {
+    length(call) == 3L && identical(as.character(call[[2L]]), "SEED") &&
+      identical(gsub("[[:space:]]+", "", paste(deparse(call[[3L]]),
+                                               collapse = "")), "1L")
+  }, logical(1L)))
+  set_seed_calls <- collect_generator_calls(parsed, "set.seed")
+  rng_calls <- collect_generator_calls(parsed, "RNGkind")
+
+  if (sample_id %in% c("P1", "P2", "P5")) {
+    top_n <- 40000L
+    seed_ok <- seed_assignment_ok && any(vapply(set_seed_calls, function(call) {
+      length(call) >= 2L && identical(as.character(call[[2L]]), "SEED")
+    }, logical(1L)))
+    rng_ok <- any(vapply(rng_calls, function(call) {
+      length(call) >= 2L &&
+        identical(as.character(call[[2L]]), "L'Ecuyer-CMRG")
+    }, logical(1L)))
+    contract_ok <- generator_argument(top_call, "top_n") %in% c("40000", "40000L") &&
+      identical(generator_argument(top_call, "curve_layer"), "curve_name") &&
+      is.na(generator_argument(top_call, "p_adj_mode")) &&
+      is.na(generator_argument(top_call, "perms"))
+  } else if (identical(sample_id, "LN")) {
+    top_n <- 100000L
+    seed_ok <- any(vapply(set_seed_calls, function(call) {
+      length(call) >= 2L &&
+        gsub("[[:space:]]+", "", paste(deparse(call[[2L]]), collapse = "")) == "1L"
+    }, logical(1L)))
+    rng_ok <- any(vapply(rng_calls, function(call) {
+      length(call) >= 2L &&
+        identical(as.character(call[[2L]]), "L'Ecuyer-CMRG")
+    }, logical(1L)))
+    contract_ok <- generator_argument(top_call, "top_n") %in%
+      c("100000", "100000L") &&
+      generator_argument(top_call, "perms") %in% c("1000", "1000L") &&
+      identical(generator_argument(top_call, "p_adj_mode"), '"BH_universe"') &&
+      identical(generator_argument(top_call, "curve_layer"),
+                '"LR_curve_30_shuffle"')
+  } else {
+    stop("Unsupported correction-render sample: ", sample_id)
+  }
+  if (!isTRUE(seed_ok) || !isTRUE(rng_ok) || !isTRUE(contract_ok) ||
+      top_pair_rows >= top_n) {
+    stop(sample_id, " generator failed its seed/RNG/complete-universe contract.")
+  }
+  invisible(list(
+    path = generator_path,
+    sha256 = sha256_file(generator_path),
+    top_n = top_n,
+    total_universe = as.integer(top_pair_rows),
+    seed = 1L,
+    rng = "L'Ecuyer-CMRG",
+    use_blocks = FALSE
+  ))
+}
+
 assert_analysis_provenance <- function(sample_id, analysis_manifest_path,
                                        top_pair_rows,
-                                       delta_manifest_path = NULL) {
+                                       delta_manifest_path = NULL,
+                                       generator_path) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     stop("jsonlite is required for analysis-provenance gates.")
   }
@@ -437,6 +576,9 @@ assert_analysis_provenance <- function(sample_id, analysis_manifest_path,
   if (!isTRUE(common_ok)) {
     stop(sample_id, " authoritative analysis manifest failed its frozen contract.")
   }
+  generator_gate <- assert_generator_provenance(
+    sample_id, generator_path, top_pair_rows
+  )
   summary_rows <- as.integer(analysis$summary$candidates_after_curve[[1L]])
   if (!identical(summary_rows, as.integer(if (identical(sample_id, "P5")) {
     top_pair_rows
@@ -447,8 +589,8 @@ assert_analysis_provenance <- function(sample_id, analysis_manifest_path,
   }
 
   if (identical(sample_id, "P5")) {
-    if (!is.null(delta_manifest_path) || top_pair_rows >= 40000L) {
-      stop("P5 complete-universe inference requires all candidates below the Top-N cap.")
+    if (!is.null(delta_manifest_path)) {
+      stop("P5 must not use the LN complete-Delta manifest.")
     }
     return(invisible(list(
       permutations = 1000L,
@@ -458,7 +600,8 @@ assert_analysis_provenance <- function(sample_id, analysis_manifest_path,
       delta_adjustment = "BH over the complete eligible universe",
       total_universe = as.integer(top_pair_rows),
       selected_pairs = as.integer(top_pair_rows),
-      top_pair_fdr_semantics = "Delta permutation FDR"
+      top_pair_fdr_semantics = "Delta permutation FDR",
+      generator = generator_gate
     )))
   }
 
@@ -488,7 +631,8 @@ assert_analysis_provenance <- function(sample_id, analysis_manifest_path,
     delta_adjustment = "BH_universe",
     total_universe = as.integer(permutation$total_universe),
     selected_pairs = as.integer(permutation$selected_pairs),
-    top_pair_fdr_semantics = "Delta permutation FDR"
+    top_pair_fdr_semantics = "Delta permutation FDR",
+    generator = generator_gate
   ))
 }
 
@@ -844,7 +988,10 @@ assert_required_figure_outputs <- function(output_root, sample_id,
     stop(sample_id, " figure bundle contains an empty required output.")
   }
 
-  files <- list.files(output_root, recursive = TRUE, full.names = TRUE)
+  files <- list.files(
+    output_root, recursive = TRUE, full.names = TRUE,
+    all.files = TRUE, no.. = TRUE
+  )
   files <- files[file.exists(files) & !dir.exists(files)]
   relative <- substring(files, nchar(output_root) + 2L)
   keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library/", relative)
@@ -908,20 +1055,31 @@ write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
   raw_inputs <- unlist(raw_gate$paths, use.names = TRUE)
   input_hashes <- raw_gate$sha256
   manifest_path <- file.path(output_root, paste0(sample_id, "_figure_manifest.json"))
-  files <- list.files(output_root, recursive = TRUE, full.names = TRUE)
-  files <- files[file.exists(files) & !dir.exists(files)]
-  files <- files[grepl("\\.(png|pdf|tsv|csv|rds)$", files, ignore.case = TRUE)]
-  files <- setdiff(files, manifest_path)
-  files <- sort(files, method = "radix")
-  relative <- substring(files, nchar(output_root) + 2L)
-  keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library/", relative)
-  files <- files[keep]
-  relative <- relative[keep]
+  inventory <- bundle_file_inventory(output_root, manifest_path)
+  files <- inventory$files
+  relative <- inventory$relative
   hashes <- if (length(files)) {
     stats::setNames(as.list(vapply(files, sha256_file, character(1L))), relative)
   } else {
     list()
   }
+  loaded_namespaces <- sort(unique(loadedNamespaces()), method = "radix")
+  direct_packages <- c(
+    "geneSCOPE", "arrow", "rhdf5", "sp", "data.table", "Matrix",
+    "jsonlite", "png", "ggplot2", "ggraph", "igraph", "scales"
+  )
+  if (identical(sample_id, "P5")) {
+    direct_packages <- c(direct_packages, "ComplexHeatmap", "circlize")
+  }
+  runtime_packages <- sort(
+    unique(c(loaded_namespaces, direct_packages)), method = "radix"
+  )
+  runtime_versions <- vapply(runtime_packages, function(package) {
+    suppressWarnings(tryCatch(
+      as.character(utils::packageVersion(package)),
+      error = function(...) NA_character_
+    ))
+  }, character(1L))
   manifest <- list(
     completed_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     sample_id = sample_id,
@@ -938,16 +1096,10 @@ write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
       R_version = R.version.string,
       platform = R.version$platform,
       R_executable = file.path(R.home("bin"), "R"),
-      packages = as.list(vapply(
-        c("geneSCOPE", "arrow", "future", "ggplot2", "ggraph", "igraph",
-          "s2", "sf", "spdep"),
-        function(package) {
-          suppressWarnings(tryCatch(
-            as.character(utils::packageVersion(package)),
-            error = function(...) NA_character_
-          ))
-        }, character(1L)
-      ))
+      package_inventory_policy =
+        "loaded_namespaces_plus_direct_workflow_and_verifier_dependencies",
+      loaded_namespaces = loaded_namespaces,
+      packages = as.list(runtime_versions)
     ),
     inputs = list(
       xenium_outs = input_dir,

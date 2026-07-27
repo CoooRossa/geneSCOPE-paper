@@ -25,6 +25,34 @@ manifest_path <- file.path(output_root, paste0(sample_id, "_figure_manifest.json
 if (!file.exists(manifest_path)) stop("Missing figure manifest: ", manifest_path)
 manifest <- jsonlite::read_json(manifest_path, simplifyVector = FALSE)
 scalar <- function(x) as.character(unlist(x, use.names = FALSE)[[1L]])
+normalize_gate_value <- function(x) {
+  if (!is.list(x)) return(x)
+  normalized <- lapply(x, normalize_gate_value)
+  if (is.null(names(x)) || !any(nzchar(names(x)))) {
+    scalar_elements <- vapply(
+      normalized,
+      function(value) !is.list(value) && length(value) == 1L,
+      logical(1L)
+    )
+    if (length(normalized) && all(scalar_elements)) {
+      return(unlist(normalized, use.names = FALSE))
+    }
+  }
+  names(normalized) <- names(x)
+  normalized
+}
+assert_recorded_gate <- function(recorded, observed, label,
+                                 tolerance = 1e-12) {
+  comparison <- all.equal(
+    normalize_gate_value(recorded), normalize_gate_value(observed),
+    tolerance = tolerance, check.attributes = FALSE
+  )
+  if (!isTRUE(comparison)) {
+    stop("Figure manifest ", label, " does not match verifier recomputation: ",
+         paste(comparison, collapse = "; "))
+  }
+  invisible(TRUE)
+}
 
 if (!identical(scalar(manifest$sample_id), sample_id) ||
     !identical(scalar(manifest$package_version), "1.0.2")) {
@@ -35,6 +63,70 @@ if (!identical(scalar(manifest$parameters$analysis_mode),
     !identical(scalar(manifest$parameters$display_derivations),
                "computeDensity_only")) {
   stop("Figure manifest does not declare the frozen render-only policy.")
+}
+expected_display_filter <- list(
+  q_Delta = "<0.05", L = ">0", r = "<0.05", pct1 = ">20", pct2 = ">20"
+)
+parameter_ok <- identical(as.integer(scalar(manifest$parameters$grid_um)), 30L) &&
+  identical(as.integer(scalar(manifest$parameters$seed)), 1L) &&
+  as.integer(scalar(manifest$parameters$ncores)) >= 1L &&
+  identical(as.integer(scalar(manifest$parameters$L_permutations)), 1000L) &&
+  identical(as.integer(scalar(manifest$parameters$delta_permutations)), 1000L) &&
+  identical(scalar(manifest$parameters$delta_adjustment), "BH_universe") &&
+  isTRUE(all.equal(manifest$parameters$display_filter,
+                   expected_display_filter, check.attributes = FALSE))
+if (!isTRUE(parameter_ok)) {
+  stop("Figure manifest does not declare the frozen correction parameters.")
+}
+if (!identical(
+      scalar(manifest$runtime$package_inventory_policy),
+      "loaded_namespaces_plus_direct_workflow_and_verifier_dependencies"
+    )) {
+  stop("Figure manifest does not declare the frozen package-inventory policy.")
+}
+required_runtime_packages <- c(
+  "geneSCOPE", "arrow", "rhdf5", "sp", "data.table", "Matrix",
+  "jsonlite", "png", "ggplot2", "ggraph", "igraph", "scales"
+)
+if (identical(sample_id, "P5")) {
+  required_runtime_packages <- c(
+    required_runtime_packages, "ComplexHeatmap", "circlize"
+  )
+}
+recorded_runtime_packages <- names(manifest$runtime$packages)
+missing_runtime_packages <- setdiff(
+  required_runtime_packages, recorded_runtime_packages
+)
+if (length(missing_runtime_packages)) {
+  stop("Figure manifest omits required runtime packages: ",
+       paste(missing_runtime_packages, collapse = ", "))
+}
+missing_runtime_versions <- vapply(
+  manifest$runtime$packages[required_runtime_packages],
+  function(x) is.null(x) || length(x) != 1L || is.na(unlist(x)[[1L]]) ||
+    !nzchar(as.character(unlist(x)[[1L]])),
+  logical(1L)
+)
+if (any(missing_runtime_versions)) {
+  stop("Figure manifest omits required runtime package versions: ",
+       paste(required_runtime_packages[missing_runtime_versions], collapse = ", "))
+}
+current_runtime_versions <- vapply(required_runtime_packages, function(package) {
+  suppressWarnings(tryCatch(
+    as.character(utils::packageVersion(package)),
+    error = function(...) NA_character_
+  ))
+}, character(1L))
+recorded_required_versions <- vapply(
+  manifest$runtime$packages[required_runtime_packages], scalar, character(1L)
+)
+runtime_identity_ok <- identical(
+  unname(recorded_required_versions), unname(current_runtime_versions)
+) && identical(scalar(manifest$runtime$R_version), R.version.string) &&
+  identical(scalar(manifest$runtime$platform), R.version$platform) &&
+  identical(scalar(manifest$runtime$R_executable), file.path(R.home("bin"), "R"))
+if (!isTRUE(runtime_identity_ok)) {
+  stop("Figure manifest runtime does not match the verification environment.")
 }
 
 git_status <- system2(
@@ -66,36 +158,65 @@ if (!identical(scalar(manifest$package_source_commit), source_commit) ||
 
 workflow_path <- scalar(manifest$workflow$path)
 mapping_path <- scalar(manifest$inputs$display_mapping$path)
-if (!file.exists(workflow_path) ||
+expected_workflow_path <- normalizePath(
+  file.path(
+    paper_root, "main-text-scripts",
+    if (identical(sample_id, "P5")) "P5_workflow.r" else "lymph.script.R"
+  ),
+  mustWork = TRUE
+)
+expected_mapping_path <- normalizePath(
+  file.path(
+    script_dir, "display-mappings",
+    paste0(sample_id, "_display_mapping.tsv")
+  ),
+  mustWork = TRUE
+)
+if (!identical(normalizePath(workflow_path, mustWork = FALSE),
+               expected_workflow_path) ||
+    !identical(normalizePath(mapping_path, mustWork = FALSE),
+               expected_mapping_path) ||
+    !file.exists(workflow_path) ||
     !identical(sha256_file(workflow_path), scalar(manifest$workflow$sha256)) ||
     !file.exists(mapping_path) ||
     !identical(sha256_file(mapping_path),
                scalar(manifest$inputs$display_mapping$sha256))) {
   stop("Figure manifest workflow or display-mapping hash mismatch.")
 }
-workflow_text <- paste(readLines(workflow_path, warn = FALSE), collapse = "\n")
 forbidden_analysis_calls <- c(
   "computeL", "computeLvsRCurve", "clusterGenes", "getTopLvsR", "computeIDelta"
 )
-forbidden_pattern <- paste0(
-  "\\b(", paste(forbidden_analysis_calls, collapse = "|"), ")\\s*\\("
+workflow_expressions <- parse(workflow_path, keep.source = FALSE)
+workflow_names <- all.names(workflow_expressions, functions = TRUE, unique = TRUE)
+forbidden_found <- intersect(workflow_names, forbidden_analysis_calls)
+if (length(forbidden_found)) {
+  stop("Correction figure workflow contains forbidden analysis symbols: ",
+       paste(forbidden_found, collapse = ", "))
+}
+dynamic_dispatch <- c(
+  "do.call", "match.fun", "get", "getFromNamespace", "eval", "evalq",
+  "parse", "sys.source", "assign", "delayedAssign"
 )
-if (grepl(forbidden_pattern, workflow_text, perl = TRUE)) {
-  stop("Correction figure workflow contains a forbidden analysis recomputation call.")
+dynamic_found <- intersect(workflow_names, dynamic_dispatch)
+if (length(dynamic_found)) {
+  stop("Correction figure workflow contains dynamic dispatch: ",
+       paste(dynamic_found, collapse = ", "))
 }
 
 expected_sources <- if (identical(sample_id, "P5")) {
   list(
     scope = c("MAIN_RESULTS", "P5/P5_scope_shuffle_v102.rds"),
     top_pairs = c("MAIN_RESULTS", "P5/P5_toplvsr_all_shuffleFDR.tsv"),
-    analysis_manifest = c("MAIN_RESULTS", "P5/manifest.json")
+    analysis_manifest = c("MAIN_RESULTS", "P5/manifest.json"),
+    generator = c("MAIN_RESULTS", "run_shuffle_reanalysis.R")
   )
 } else {
   list(
     scope = c("MAIN_RESULTS", "LN/LN_scope_shuffle_v102.rds"),
     top_pairs = c("LN_COMPLETE_RESULTS", "LN_top_pairs_complete_delta_v102.tsv"),
     analysis_manifest = c("MAIN_RESULTS", "LN/manifest.json"),
-    delta_manifest = c("LN_COMPLETE_RESULTS", "manifest.json")
+    delta_manifest = c("LN_COMPLETE_RESULTS", "manifest.json"),
+    generator = c("LN_COMPLETE_RESULTS", "recompute_ln_complete_delta.R")
   )
 }
 analysis_sources <- manifest$inputs$analysis_sources
@@ -127,11 +248,11 @@ authoritative_cluster_col <- if (identical(sample_id, "P5")) {
 }
 input_root <- scalar(manifest$inputs$xenium_outs)
 scope_obj <- readRDS(verified_sources$scope$path)
-assert_authoritative_scope(
+observed_scope_gate <- assert_authoritative_scope(
   scope_obj, sample_id, "grid30", "LR_curve_30_shuffle",
   authoritative_cluster_col
 )
-assert_scope_xenium_identity(
+observed_raw_identity_gate <- assert_scope_xenium_identity(
   scope_obj, input_root, scalar(manifest$inputs$roi_file), sample_id
 )
 source_membership <- assert_reference_membership(
@@ -159,16 +280,40 @@ expected_pair_rows <- if (identical(sample_id, "P5")) 1578L else 75405L
 source_top_pairs <- read_authoritative_top_pairs(
   verified_sources$top_pairs$path, sample_id, expected_pair_rows
 )
-assert_scope_pair_table(scope_obj, source_top_pairs, sample_id)
+observed_pair_scope_gate <- assert_scope_pair_table(
+  scope_obj, source_top_pairs, sample_id
+)
 source_display_pairs <- filter_display_pairs(source_top_pairs)
 assert_reference_top6(script_dir, sample_id, source_display_pairs)
-assert_analysis_provenance(
+observed_analysis_provenance <- assert_analysis_provenance(
   sample_id, verified_sources$analysis_manifest$path, expected_pair_rows,
   delta_manifest_path = if (identical(sample_id, "LN")) {
     verified_sources$delta_manifest$path
   } else {
     NULL
-  }
+  },
+  generator_path = verified_sources$generator$path
+)
+observed_formula_gate <- canonical_lee_s2_gate()
+assert_recorded_gate(
+  as.numeric(scalar(manifest$gate_max_abs_L_diff)), observed_formula_gate,
+  "canonical Lee S2 gate"
+)
+assert_recorded_gate(
+  manifest$parameters$authoritative_scope_gate, observed_scope_gate,
+  "authoritative-scope gate"
+)
+assert_recorded_gate(
+  manifest$parameters$raw_identity_gate, observed_raw_identity_gate,
+  "scope-to-Xenium identity gate"
+)
+assert_recorded_gate(
+  manifest$parameters$pair_scope_gate, observed_pair_scope_gate,
+  "pair-to-scope gate"
+)
+assert_recorded_gate(
+  manifest$parameters$analysis_provenance_gate,
+  observed_analysis_provenance, "analysis-provenance gate"
 )
 rm(scope_obj)
 invisible(gc())
@@ -183,15 +328,9 @@ if (!identical(names(recorded_inputs), names(observed_inputs)) ||
   stop("Figure manifest raw-input hash mismatch.")
 }
 
-files <- list.files(output_root, recursive = TRUE, full.names = TRUE)
-files <- files[file.exists(files) & !dir.exists(files)]
-files <- files[grepl("\\.(png|pdf|tsv|csv|rds)$", files, ignore.case = TRUE)]
-files <- setdiff(files, manifest_path)
-files <- sort(files, method = "radix")
-relative <- substring(files, nchar(output_root) + 2L)
-keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library/", relative)
-files <- files[keep]
-relative <- relative[keep]
+inventory <- bundle_file_inventory(output_root, manifest_path)
+files <- inventory$files
+relative <- inventory$relative
 recorded_outputs <- unlist(manifest$outputs_sha256, use.names = TRUE)
 if (!setequal(relative, names(recorded_outputs))) {
   stop("Figure manifest output inventory does not match the bundle.")
@@ -344,7 +483,9 @@ if (identical(sample_id, "P5")) {
     "P5_top_pairs_all.tsv", "P5_top_pairs_display_filter.tsv", "P5_Top6.tsv",
     "P5_dendro_path_audit.tsv"
   )
-  assert_required_figure_outputs(output_root, sample_id, required, 205L)
+  observed_output_gate <- assert_required_figure_outputs(
+    output_root, sample_id, required, 205L
+  )
   dendro <- utils::read.delim(file.path(output_root, "P5_dendro_path_audit.tsv"),
                               stringsAsFactors = FALSE, check.names = FALSE)
   reference <- utils::read.delim(file.path(script_dir, "reference_p5_dendro_path.tsv"),
@@ -364,8 +505,11 @@ if (identical(sample_id, "P5")) {
     "grid30/grid30_boundary.png",
     "LN_top_pairs_all.tsv", "LN_top_pairs_display_filter.tsv", "LN_Top6.tsv"
   )
-  assert_required_figure_outputs(output_root, sample_id, required, 8L)
+  observed_output_gate <- assert_required_figure_outputs(
+    output_root, sample_id, required, 8L
+  )
 }
+assert_recorded_gate(manifest$output_gate, observed_output_gate, "output gate")
 
 top6 <- utils::read.delim(file.path(output_root, paste0(sample_id, "_Top6.tsv")),
                           stringsAsFactors = FALSE, check.names = FALSE)

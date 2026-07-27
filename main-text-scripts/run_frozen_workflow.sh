@@ -36,7 +36,13 @@ if [[ -e "${FINAL_WORKFLOW_OUTPUT}" || -L "${FINAL_WORKFLOW_OUTPUT}" ]]; then
   exit 2
 fi
 
-WORKFLOW_OUTPUT="$(mktemp -d "${output_parent}/.${output_name}.staging.XXXXXX")"
+OUTPUT_LOCK="${FINAL_WORKFLOW_OUTPUT}.publish-lock"
+if ! mkdir "${OUTPUT_LOCK}" 2>/dev/null; then
+  echo "Another frozen workflow owns the output lock: ${OUTPUT_LOCK}" >&2
+  exit 2
+fi
+
+WORKFLOW_OUTPUT=""
 cleanup_stage() {
   if [[ -n "${WORKFLOW_OUTPUT:-}" && -d "${WORKFLOW_OUTPUT}" ]]; then
     case "${WORKFLOW_OUTPUT}" in
@@ -44,8 +50,13 @@ cleanup_stage() {
       *) echo "Refusing to clean unexpected staging path: ${WORKFLOW_OUTPUT}" >&2 ;;
     esac
   fi
+  if [[ -n "${OUTPUT_LOCK:-}" && -d "${OUTPUT_LOCK}" ]]; then
+    rmdir "${OUTPUT_LOCK}" 2>/dev/null ||
+      echo "Could not release frozen-workflow output lock: ${OUTPUT_LOCK}" >&2
+  fi
 }
 trap cleanup_stage EXIT
+WORKFLOW_OUTPUT="$(mktemp -d "${output_parent}/.${output_name}.staging.XXXXXX")"
 
 if [[ "${SAMPLE_ID}" == "P5" ]]; then
   export GENESCOPE_P5_OUTPUT="${WORKFLOW_OUTPUT}"
@@ -59,7 +70,18 @@ Rscript --vanilla "${WORKFLOW_SCRIPT}"
 Rscript --vanilla "${PAPER_ROOT}/correction-analysis/verify_figure_bundle.R" \
   "${WORKFLOW_OUTPUT}" "${SAMPLE_ID}"
 rm -rf -- "${WORKFLOW_OUTPUT}/.geneSCOPE-v1.0.2-library"
+if [[ -e "${FINAL_WORKFLOW_OUTPUT}" || -L "${FINAL_WORKFLOW_OUTPUT}" ]]; then
+  echo "Refusing to publish over a newly created output path: ${FINAL_WORKFLOW_OUTPUT}" >&2
+  exit 2
+fi
 mv "${WORKFLOW_OUTPUT}" "${FINAL_WORKFLOW_OUTPUT}"
+if [[ ! -d "${FINAL_WORKFLOW_OUTPUT}" ||
+      ! -f "${FINAL_WORKFLOW_OUTPUT}/${SAMPLE_ID}_figure_manifest.json" ]]; then
+  echo "Frozen figure output was not published as the expected directory." >&2
+  exit 2
+fi
 WORKFLOW_OUTPUT=""
+rmdir "${OUTPUT_LOCK}"
+OUTPUT_LOCK=""
 trap - EXIT
 echo "Published frozen figure output: ${FINAL_WORKFLOW_OUTPUT}"

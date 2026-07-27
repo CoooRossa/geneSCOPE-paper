@@ -170,7 +170,11 @@ bash main-text-scripts/run_frozen_workflow.sh LN
 These entry points require a clean paper commit, generate in a new staging
 directory, record raw-input/ROI/mapping/workflow hashes, and render only from
 the hash-pinned authoritative analysis objects and complete pair tables. They
-verify the complete bundle and publish the figure directory only after every
+also require the pinned authority generators: `run_shuffle_reanalysis.R` at
+the main-result root and `recompute_ln_complete_delta.R` beside the complete
+LN pair table. The generator gates record Top-N completeness, seed, RNG, and
+shuffle settings. Every ordinary output file, including hidden or extensionless
+files, is inventoried; the figure directory is published only after every
 freeze gate succeeds.
 
 ## Outputs

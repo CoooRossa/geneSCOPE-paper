@@ -362,15 +362,43 @@ for (sample_id in sample_ref$sample_id) {
   record(nzchar(top_path), paste0(sample_id, " all-pair table present"), top_path)
   if (nzchar(top_path)) {
     top <- utils::read.delim(top_path, stringsAsFactors = FALSE, check.names = FALSE)
-    # The 2026-07-26 P1/P2/P5 reference manifests predate the explicit
-    # provenance record.  For those tables only, fewer than the historical
-    # Top-N cap (40,000) proves that every eligible pair was selected, making
-    # ordinary BH numerically identical to eligible-universe-scaled BH.  A
-    # table at the cap (LN) cannot use this inference and must be regenerated.
-    if (!delta_complete && is.null(manifest$delta_permutation) && nrow(top) < 40000L) {
-      delta_complete <- TRUE
-      delta_detail <- paste0("legacy inference: selected all ", nrow(top),
-                             " eligible pairs (< historical Top-N cap)")
+    if (delta_complete && identical(sample_id, "LN")) {
+      generator_gate <- try(
+        assert_generator_provenance(
+          "LN", file.path(ln_complete_dir, "recompute_ln_complete_delta.R"),
+          top_pair_rows = nrow(top)
+        ),
+        silent = TRUE
+      )
+      delta_complete <- !inherits(generator_gate, "try-error")
+      delta_detail <- if (delta_complete) {
+        paste0(
+          delta_detail, "; generator Top-N=", generator_gate$top_n,
+          ", seed=", generator_gate$seed, ", RNG=", generator_gate$rng
+        )
+      } else {
+        paste0("generator provenance failed: ", as.character(generator_gate))
+      }
+    }
+    if (!delta_complete && sample_id %in% c("P1", "P2", "P5")) {
+      generator_path <- file.path(main_root, "run_shuffle_reanalysis.R")
+      generator_gate <- try(
+        assert_generator_provenance(
+          sample_id, generator_path, top_pair_rows = nrow(top)
+        ),
+        silent = TRUE
+      )
+      delta_complete <- !inherits(generator_gate, "try-error")
+      delta_detail <- if (delta_complete) {
+        paste0(
+          "generator-pinned complete universe: selected=", nrow(top),
+          ", Top-N=", generator_gate$top_n,
+          ", seed=", generator_gate$seed,
+          ", RNG=", generator_gate$rng
+        )
+      } else {
+        paste0("generator provenance failed: ", as.character(generator_gate))
+      }
     }
     record(delta_complete, paste0(sample_id, " complete eligible Delta universe"), delta_detail)
     filtered <- filter_display_pairs(top)

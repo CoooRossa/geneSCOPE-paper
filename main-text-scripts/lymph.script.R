@@ -42,6 +42,10 @@ Lymph.analysis_manifest_file <- normalizePath(
 Lymph.delta_manifest_file <- normalizePath(
   file.path(dirname(Lymph.top_pairs_file), "manifest.json"), mustWork = TRUE
 )
+Lymph.generator_file <- normalizePath(
+  file.path(dirname(Lymph.top_pairs_file), "recompute_ln_complete_delta.R"),
+  mustWork = TRUE
+)
 Lymph.coord_file <- normalizePath(
   Sys.getenv("GENESCOPE_LN_ROI", file.path(script_dir, "..", "ROI-coordinate-files", "lymph_roi.csv")),
   mustWork = TRUE
@@ -71,11 +75,16 @@ analysis_sources <- list(
   ),
   delta_manifest = assert_reference_artifact(
     script_dir, "LN_COMPLETE_RESULTS", "manifest.json", Lymph.delta_manifest_file
+  ),
+  generator = assert_reference_artifact(
+    script_dir, "LN_COMPLETE_RESULTS", "recompute_ln_complete_delta.R",
+    Lymph.generator_file
   )
 )
 analysis_provenance_gate <- assert_analysis_provenance(
   "LN", Lymph.analysis_manifest_file, top_pair_rows = 75405L,
-  delta_manifest_path = Lymph.delta_manifest_file
+  delta_manifest_path = Lymph.delta_manifest_file,
+  generator_path = Lymph.generator_file
 )
 Lymph.coord <- readRDS(Lymph.scope_file)
 analysis_scope_gate <- assert_authoritative_scope(

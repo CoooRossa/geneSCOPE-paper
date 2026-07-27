@@ -39,6 +39,10 @@ P5.top_pairs_file <- required_file_env("GENESCOPE_P5_TOP_PAIRS")
 P5.analysis_manifest_file <- normalizePath(
   file.path(dirname(P5.scope_file), "manifest.json"), mustWork = TRUE
 )
+P5.generator_file <- normalizePath(
+  file.path(dirname(dirname(P5.scope_file)), "run_shuffle_reanalysis.R"),
+  mustWork = TRUE
+)
 P5.coord_file <- normalizePath(
   Sys.getenv("GENESCOPE_P5_ROI", file.path(script_dir, "..", "ROI-coordinate-files", "P5_roi.csv")),
   mustWork = TRUE
@@ -63,10 +67,14 @@ analysis_sources <- list(
   ),
   analysis_manifest = assert_reference_artifact(
     script_dir, "MAIN_RESULTS", "P5/manifest.json", P5.analysis_manifest_file
+  ),
+  generator = assert_reference_artifact(
+    script_dir, "MAIN_RESULTS", "run_shuffle_reanalysis.R", P5.generator_file
   )
 )
 analysis_provenance_gate <- assert_analysis_provenance(
-  "P5", P5.analysis_manifest_file, top_pair_rows = 1578L
+  "P5", P5.analysis_manifest_file, top_pair_rows = 1578L,
+  generator_path = P5.generator_file
 )
 P5.coord <- readRDS(P5.scope_file)
 analysis_scope_gate <- assert_authoritative_scope(
