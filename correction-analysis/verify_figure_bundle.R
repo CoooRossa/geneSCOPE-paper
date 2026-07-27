@@ -45,7 +45,7 @@ assert_recorded_gate <- function(recorded, observed, label,
                                  tolerance = 1e-12) {
   comparison <- all.equal(
     normalize_gate_value(recorded), normalize_gate_value(observed),
-    tolerance = tolerance, check.attributes = FALSE
+    tolerance = tolerance, check.attributes = TRUE
   )
   if (!isTRUE(comparison)) {
     stop("Figure manifest ", label, " does not match verifier recomputation: ",

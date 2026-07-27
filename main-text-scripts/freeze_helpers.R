@@ -976,7 +976,11 @@ assert_required_figure_outputs <- function(output_root, sample_id,
                                            required_relative,
                                            expected_png_count) {
   output_root <- normalizePath(output_root, mustWork = TRUE)
-  required_relative <- unique(as.character(required_relative))
+  required_relative <- sub("^\\./+", "", unique(as.character(required_relative)))
+  if (any(!nzchar(required_relative)) ||
+      any(grepl("^/|(^|/)\\.\\.(/|$)", required_relative))) {
+    stop(sample_id, " figure bundle has an unsafe required-output path.")
+  }
   required <- file.path(output_root, required_relative)
   missing <- required[!file.exists(required) | dir.exists(required)]
   if (length(missing)) {
