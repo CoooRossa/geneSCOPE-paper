@@ -18,6 +18,9 @@ stats_tsv <- ifelse(
   args[[10]],
   file.path(outdir, "stats.tsv")
 )
+cluster_pct <- ifelse(length(args) >= 11 && nzchar(args[[11]]), args[[11]], "q95")
+n_restart <- ifelse(length(args) >= 12 && nzchar(args[[12]]), as.integer(args[[12]]), 1000L)
+perms <- ifelse(length(args) >= 13 && nzchar(args[[13]]), as.integer(args[[13]]), 1000L)
 
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
 
@@ -30,7 +33,18 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
-set.seed(seed)
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
+  stop("This frozen runner requires geneSCOPE 1.0.2")
+}
+if (!cluster_pct %in% c("q95", "q99.9")) stop("Unsupported cluster_pct: ", cluster_pct)
+if (!is.finite(n_restart) || n_restart < 1L) stop("n_restart must be positive")
+if (!is.finite(perms) || perms < 1L) stop("perms must be positive")
+
+reset_rng <- function() {
+  RNGkind("L'Ecuyer-CMRG")
+  set.seed(seed)
+}
+reset_rng()
 
 start_time <- Sys.time()
 
@@ -105,15 +119,22 @@ sha256_file <- function(path) {
   if (is.na(path) || !nzchar(path) || !file.exists(path)) return("")
   cmd <- Sys.which("sha256sum")
   if (nzchar(cmd)) {
-    out <- tryCatch(system2(cmd, path, stdout = TRUE, stderr = TRUE), error = function(e) "")
-    if (length(out) > 0) return(strsplit(out[1], "\\s+")[[1]][1])
+    out <- tryCatch(system2(cmd, shQuote(path), stdout = TRUE, stderr = TRUE),
+                    error = function(e) "")
+  } else {
+    cmd <- Sys.which("shasum")
+    if (!nzchar(cmd)) stop("sha256sum or shasum is required for input provenance.")
+    out <- tryCatch(
+      system2(cmd, c("-a", "256", shQuote(path)), stdout = TRUE, stderr = TRUE),
+      error = function(e) ""
+    )
   }
-  cmd2 <- Sys.which("shasum")
-  if (nzchar(cmd2)) {
-    out <- tryCatch(system2(cmd2, c("-a", "256", path), stdout = TRUE, stderr = TRUE), error = function(e) "")
-    if (length(out) > 0) return(strsplit(out[1], "\\s+")[[1]][1])
+  status <- attr(out, "status", exact = TRUE)
+  digest <- if (length(out)) strsplit(out[[1L]], "[[:space:]]+")[[1L]][[1L]] else ""
+  if ((!is.null(status) && status != 0L) || !grepl("^[0-9a-fA-F]{64}$", digest)) {
+    stop("Could not hash input: ", path)
   }
-  as.character(tools::md5sum(path))
+  tolower(digest)
 }
 
 sha256_text <- function(text) {
@@ -197,39 +218,71 @@ if (nzchar(obs_id_hash)) {
   roi_hash <- sha256_text(paste0(roi_source_sha256, "\n", obs_id_hash))
 }
 
+input_files <- c(
+  cell_feature_matrix = file.path(data_dir, "cell_feature_matrix.h5"),
+  cells = file.path(data_dir, "cells.parquet"),
+  transcripts = file.path(data_dir, "transcripts.parquet")
+)
+input_files <- input_files[file.exists(input_files)]
+input_sha256 <- as.list(vapply(input_files, sha256_file, character(1L)))
+
 if (is.na(n_obs_raw)) n_obs_raw <- n_obs_input
 if (is.na(n_obs_roi)) n_obs_roi <- n_obs_input
 
 # NOTE:
 # - parallel_backend is used only for ROI clipping stages (per your patch).
 # - In Docker, default serial is the safest. You can override via --parallel_backend.
+coord_file_arg <- if (is.na(coord_csv)) NULL else coord_csv
 scope_obj <- createSCOPE(
   data_dir = data_dir,
   grid_length = grid_um,
   seg_type = "cell",
-  coord_file = ifelse(is.na(coord_csv), NULL, coord_csv),
+  coord_file = coord_file_arg,
   ncores = ncores,
   parallel_backend = parallel_backend
 )
 
 scope_obj <- normalizeMoleculesInGrid(scope_obj = scope_obj, grid_name = grid_name)
 
-scope_obj <- computeWeights(scope_obj = scope_obj, grid_name = grid_name, ncores = ncores)
+scope_obj <- computeWeights(
+  scope_obj = scope_obj,
+  grid_name = grid_name,
+  style = "B",
+  topology = "auto",
+  store_mat = TRUE,
+  store_listw = TRUE,
+  ncores = ncores
+)
 
-scope_obj <- computeL(scope_obj = scope_obj, grid_name = grid_name, use_bigmemory = FALSE, ncores = ncores)
+reset_rng()
+scope_obj <- computeL(
+  scope_obj = scope_obj,
+  grid_name = grid_name,
+  use_bigmemory = FALSE,
+  ncores = ncores,
+  perms = perms,
+  use_blocks = FALSE,
+  norm_layer = "Xz"
+)
 
+cluster_name <- paste0("correction_", cluster_pct, "_res0.1_", grid_name, "_freq0.95")
+reset_rng()
 scope_obj <- clusterGenes(
   scope_obj = scope_obj,
   grid_name = grid_name,
-  pct_min = "q95",
+  pct_min = cluster_pct,
   algo = "leiden",
   resolution = 0.1,
   ncores = ncores,
   consensus_thr = 0.95,
-  n_restart = 200
+  n_restart = n_restart,
+  use_log1p_weight = TRUE,
+  use_consensus = TRUE,
+  cluster_name = cluster_name,
+  graph_slot_name = cluster_name
 )
 
-membership_col <- "modL0.00"
+membership_col <- cluster_name
 genes <- rownames(scope_obj@meta.data)
 membership <- scope_obj@meta.data[[membership_col]]
 if (is.null(membership)) {
@@ -305,7 +358,20 @@ extract_lee_stats <- function(scope_obj, grid_name) {
   }
 
   lee_layers <- layer_names[grepl("^LeeStats_", layer_names)]
-  layer_name <- if (length(lee_layers) > 0) lee_layers[[1]] else layer_names[[1]]
+  valid_layers <- lee_layers[vapply(lee_layers, function(nm) {
+    x <- stats_grid[[nm]]
+    meta <- x$meta
+    is.list(meta) &&
+      meta$formula_id %in% c("Lee2009_S2_v1", "Lee_S2_v1") &&
+      identical(meta$use_blocks, FALSE) &&
+      identical(as.integer(meta$perms), as.integer(perms)) &&
+      identical(meta$permutation_scheme, "global_joint_shuffle")
+  }, logical(1))]
+  if (length(valid_layers) != 1L) {
+    stop("Expected exactly one canonical global-shuffle Lee layer; found: ",
+         paste(valid_layers, collapse = ", "))
+  }
+  layer_name <- valid_layers[[1L]]
 
   lee <- stats_grid[[layer_name]]
   if (is.null(lee) || is.null(lee$L) || is.null(lee$FDR)) {
@@ -462,6 +528,14 @@ n_obs_grid <- infer_grid_n_obs(scope_obj, grid_name)
 edges_out <- emit_edges_all(lee, gg_out$gg_genes, n_obs_grid, outdir, edge_type = "lee_L")
 
 method_version <- tryCatch(as.character(utils::packageVersion("geneSCOPE")), error = function(e) "unknown")
+read_single_line <- function(path) {
+  if (!file.exists(path)) return("")
+  x <- readLines(path, n = 1L, warn = FALSE)
+  if (length(x)) trimws(x[[1L]]) else ""
+}
+package_source_commit <- read_single_line("/tmp/geneSCOPE_provenance/source_commit")
+package_vendor_tree_sha256 <- read_single_line("/tmp/geneSCOPE_provenance/vendor_tree_sha256")
+conda_explicit_sha256 <- sha256_file("/tmp/geneSCOPE_provenance/conda-explicit.txt")
 timestamp <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
 run_id <- paste0("genescope_", format(Sys.time(), "%Y%m%dT%H%M%S"))
 
@@ -479,6 +553,9 @@ wall_time_sec <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 meta <- list(
   method = "genescope",
   method_version = method_version,
+  package_source_commit = package_source_commit,
+  package_vendor_tree_sha256 = package_vendor_tree_sha256,
+  conda_explicit_sha256 = conda_explicit_sha256,
   run_id = run_id,
   timestamp = timestamp,
   gg_weight_type = "Lee_L",
@@ -496,6 +573,7 @@ meta <- list(
   edges_n_total = edges_out$edges_n_total,
   edges_n_obs = edges_out$edges_n_obs,
   input_dataset_id = dataset_id,
+  input_sha256 = input_sha256,
   roi_id = roi_id,
   roi_hash = roi_hash,
   roi_source_path = ifelse(is.na(coord_csv), "", coord_csv),
@@ -507,7 +585,7 @@ meta <- list(
   n_obs_used = n_obs_used,
   n_vars_input = n_vars_input,
   n_vars_used = n_vars_used,
-  gene_filtering = list(pct_min = "q95"),
+  gene_filtering = list(pct_min = cluster_pct),
   random_seed = seed,
   stochastic = TRUE,
   params = list(
@@ -515,6 +593,18 @@ meta <- list(
     ncores = ncores,
     parallel_backend = parallel_backend,
     membership_col = membership_col,
+    lee_formula = "n/S2 * crossprod(W %*% Xz) / sqrt(crossprod norms)",
+    lee_formula_id = if (!is.null(lee$meta$formula_id)) lee$meta$formula_id else "",
+    permutation_scheme = "global_joint_shuffle",
+    use_blocks = FALSE,
+    permutations = perms,
+    rng_kind = "L'Ecuyer-CMRG",
+    seed = seed,
+    cluster_pct = cluster_pct,
+    cluster_resolution = 0.1,
+    cluster_consensus_threshold = 0.95,
+    cluster_n_restart = n_restart,
+    weight_provenance = scope_obj@grid[[grid_name]]$weight_provenance,
     roi_applied = roi_applied
   ),
   runtime = list(

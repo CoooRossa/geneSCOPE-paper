@@ -1,2 +1,7 @@
 # macOS
 .DS_Store
+
+# Generated benchmark and correction outputs
+final_out/
+correction-analysis/results/
+correction-figures/

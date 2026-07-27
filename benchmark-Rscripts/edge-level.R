@@ -526,7 +526,9 @@ select_edges_with_refill <- function(edges_sorted, top_n, refill_to_top_n_compar
     empty$expected_positive_rate <- expected_rate
     return(empty)
   }
-  comparable_idx <- !is.na(edge_df$string_score) & !is.na(edge_df$score)
+  # The frozen Top-N contract does not refill STRING-unmappable predictions.
+  # They stay in their ranked positions and contribute zero positives (FPs).
+  comparable_idx <- !is.na(edge_df$score)
   edge_df <- edge_df[comparable_idx, , drop = FALSE]
   if (!nrow(edge_df)) {
     empty <- set_defs
@@ -584,12 +586,16 @@ score_edges_from_mapped <- function(edge_df, string_score_threshold, precision_k
   }
   edge_df[, string_score := suppressWarnings(as.numeric(string_score))]
   edge_df[, score := suppressWarnings(as.numeric(score))]
-  edge_df[, label := ifelse(!is.na(string_score), string_score >= as.numeric(string_score_threshold), NA)]
+  # Keep STRING-unmappable predictions in the denominator as false positives.
+  # This is required for a literal Top-N evaluation without mapped-edge refill.
+  edge_df[, label := is.finite(string_score) &
+            string_score >= as.numeric(string_score_threshold)]
 
   n_edges <- nrow(edge_df)
   ok_idx <- !is.na(edge_df$label) & !is.na(edge_df$score)
   n_comparable_edges <- sum(ok_idx)
-  edge_coverage <- if (n_edges) n_comparable_edges / n_edges else NA_real_
+  n_string_mapped <- sum(is.finite(edge_df$string_score) & is.finite(edge_df$score))
+  edge_coverage <- if (n_edges) n_string_mapped / n_edges else NA_real_
   labels_ok <- edge_df$label[ok_idx]
   scores_ok <- edge_df$score[ok_idx]
   n_pos_labels <- sum(labels_ok, na.rm = TRUE)
@@ -1860,6 +1866,7 @@ run_one_ranking_key <- function(ranking_key_desc_use) {
       ranking_key = ranking_key_desc_use,
       ranking_key_slug = rk_slug,
       refill_to_top_n_comparable = isTRUE(refill_to_top_n_comparable),
+      unmappable_predictions = "retained_in_rank_and_counted_as_false_positive",
       refill_max_multiplier = as.integer(refill_max_multiplier),
       keep_details = keep_details_flag,
       pr_bin_size = as.integer(pr_bin_size),

@@ -3,6 +3,21 @@
 library(geneSCOPE)
 library(ggplot2)
 
+script_dir <- local({
+  x <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  if (length(x)) dirname(normalizePath(sub("^--file=", "", x[[1L]]))) else normalizePath(getwd())
+})
+source(file.path(script_dir, "freeze_helpers.R"))
+
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
+  stop("This workflow requires geneSCOPE 1.0.2.")
+}
+freeze_source <- require_freeze_source_metadata()
+gate_max_abs_L_diff <- canonical_lee_s2_gate()
+seed <- integer_env("GENESCOPE_SEED", 1L)
+ncores <- integer_env("GENESCOPE_THREADS", 64L)
+configure_freeze_runtime()
+
 gray_bg_theme <- ggplot2::theme(
   text = ggplot2::element_text(size = 8, face = "plain"),
   plot.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
@@ -18,8 +33,14 @@ gray_bg_theme <- ggplot2::theme(
   axis.text = ggplot2::element_text(size = 8)
 )
 
-P5.path <- "/path/to/GSE280314_Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE_outs"
-P5.coord_file <- "/path/to/P5_roi.csv"
+P5.path <- required_directory_env("GENESCOPE_P5_OUTS")
+P5.coord_file <- normalizePath(
+  Sys.getenv("GENESCOPE_P5_ROI", file.path(script_dir, "..", "ROI-coordinate-files", "P5_roi.csv")),
+  mustWork = TRUE
+)
+output_root <- Sys.getenv("GENESCOPE_P5_OUTPUT", file.path(getwd(), "P5_correction_output"))
+output_root <- assert_fresh_output_dir(output_root)
+setwd(output_root)
 grid_um <- 30
 grid_name <- paste0("grid", grid_um)
 
@@ -28,7 +49,7 @@ P5.coord <- createSCOPE(
   grid_length = c(30),
   seg_type = "cell",
   coord_file = P5.coord_file,
-  ncores = 96
+  ncores = ncores
 )
 
 P5.coord <- addSingleCells(
@@ -50,14 +71,23 @@ P5.coord <- normalizeMoleculesInGrid(
 
 P5.coord <- computeWeights(
   scope_obj = P5.coord,
-  grid_name = grid_name
+  grid_name = grid_name,
+  style = "B",
+  topology = "auto",
+  store_mat = TRUE,
+  store_listw = TRUE,
+  ncores = ncores
 )
 
+reset_freeze_rng(seed)
 P5.coord <- computeL(
   scope_obj = P5.coord,
   use_bigmemory = FALSE,
   grid_name = grid_name,
-  ncores = 64
+  ncores = ncores,
+  perms = 1000,
+  use_blocks = FALSE,
+  norm_layer = "Xz"
 )
 
 P5.coord <- computeCorrelation(
@@ -66,15 +96,17 @@ P5.coord <- computeCorrelation(
   layer = "logCPM",
   method = "pearson",
   blocksize = 2000,
-  ncores = 64
+  ncores = ncores
 )
 
 curve_name <- paste0("LR_curve_", grid_um)
+reset_freeze_rng(seed)
 P5.coord <- computeLvsRCurve(
   scope_obj = P5.coord,
   level = "cell",
   grid_name = grid_name,
-  ncores = 64,
+  ncores = ncores,
+  B = 1000,
   downsample = 0.05,
   k_max = 2000,
   n_strata = 1000,
@@ -121,6 +153,7 @@ ggsave(
 options(future.globals.maxSize = 500000 * 1024^2)
 
 cluster_col <- paste0("q95_res0.1_grid", grid_um, "_log1p_freq0.95")
+reset_freeze_rng(seed)
 P5.coord <- clusterGenes(
   scope_obj = P5.coord,
   grid_name = grid_name,
@@ -133,9 +166,25 @@ P5.coord <- clusterGenes(
   use_log1p_weight = TRUE,
   use_consensus = TRUE,
   consensus_thr = 0.95,
-  n_restart = 1000
+  n_restart = 1000,
+  ncores = ncores
 )
 
+display_mapping_path <- file.path(
+  script_dir, "..", "correction-analysis", "display-mappings", "P5_display_mapping.tsv"
+)
+display_mapping <- read_display_mapping(script_dir, "P5")
+P5.coord@meta.data[[paste0(cluster_col, "_raw")]] <- as.character(
+  P5.coord@meta.data[[cluster_col]]
+)
+membership_gate <- assert_reference_membership(
+  script_dir, "P5", rownames(P5.coord@meta.data),
+  P5.coord@meta.data[[paste0(cluster_col, "_raw")]]
+)
+P5.coord@meta.data[[cluster_col]] <- apply_display_mapping(
+  P5.coord@meta.data[[paste0(cluster_col, "_raw")]], display_mapping
+)
+cluster_palette <- display_palette(display_mapping)
 P5.coord@meta.data[[cluster_col]] <- factor(
   P5.coord@meta.data[[cluster_col]],
   levels = as.character(sort(unique(na.omit(P5.coord@meta.data[[cluster_col]]))))
@@ -151,6 +200,7 @@ p_network <- plotNetwork(
   use_consensus_graph = TRUE,
   graph_slot_name = cluster_col,
   cluster_vec = cluster_col,
+  cluster_palette = cluster_palette,
   show_sign = TRUE,
   drop_isolated = TRUE,
   neg_linetype = "dashed",
@@ -167,13 +217,14 @@ p_network <- plotNetwork(
 ) +
   gray_bg_theme
 
-p_dendro_network <- plotDendroNetwork(
+dendro_out <- plotDendroNetwork(
   scope_obj = P5.coord,
   lee_stats_layer = "LeeStats_Xz",
   grid_name = grid_name,
   use_consensus_graph = TRUE,
   graph_slot_name = cluster_col,
   cluster_vec = cluster_col,
+  cluster_palette = cluster_palette,
   IDelta_col_name = NULL,
   node_size = 4,
   edge_width = 3,
@@ -182,8 +233,15 @@ p_dendro_network <- plotDendroNetwork(
   max.overlaps = 10,
   title = " ",
   tree_mode = "radial"
-) +
-  gray_bg_theme
+)
+p_dendro_network <- if (inherits(dendro_out, "ggplot")) {
+  dendro_out
+} else if (is.list(dendro_out) && inherits(dendro_out$plot, "ggplot")) {
+  dendro_out$plot
+} else {
+  stop("plotDendroNetwork returned an unexpected type.")
+}
+p_dendro_network <- p_dendro_network + gray_bg_theme
 
 ggsave(
   filename = file.path(network_dir, paste0("network_", cluster_col, ".png")),
@@ -364,11 +422,12 @@ ggsave(
   dpi = 600
 )
 
-# ---- Density plots for selected clusters ----
-cluster_ids <- c(1:24)
+# ---- Density plots for all retained clusters ----
 if (!cluster_col %in% colnames(P5.coord@meta.data)) {
   stop("Cluster column not found in meta.data: ", cluster_col)
 }
+cluster_ids <- sort(unique(na.omit(P5.coord@meta.data[[cluster_col]])))
+cluster_ids <- cluster_ids[as.character(cluster_ids) != "-1"]
 
 cluster_genes <- rownames(P5.coord@meta.data)[P5.coord@meta.data[[cluster_col]] %in% cluster_ids]
 cluster_genes <- cluster_genes[order(P5.coord@meta.data[cluster_genes, cluster_col], cluster_genes)]
@@ -412,19 +471,32 @@ for (gene in cluster_genes) {
   )
 }
 
-top.delta.l <- getTopLvsR(
+reset_freeze_rng(seed)
+top.delta.all <- getTopLvsR(
   scope_obj = P5.coord,
   grid_name = grid_name,
   pear_level = "cell",
   L_range = c(0.0, 1),
-  top_n = 40000,
-  ncores = 64,
+  top_n = 100000,
+  ncores = ncores,
   direction = "largest",
+  do_perm = TRUE,
+  perms = 1000,
+  use_blocks = FALSE,
+  p_adj_mode = "BH_universe",
   pval_mode = "uniform",
   curve_layer = curve_name,
   CI_rule = "remove_within"
 )
-top.delta.l <- top.delta.l[top.delta.l$fdr < 0.05 & top.delta.l$pct1 >= 5 & top.delta.l$pct2 >= 5, , drop = FALSE]
+assert_complete_delta_universe(top.delta.all)
+top.delta.l <- filter_display_pairs(top.delta.all)
+assert_reference_top6(
+  file.path(script_dir, "..", "correction-analysis"), "P5", top.delta.l
+)
+
+utils::write.table(top.delta.all, "P5_top_pairs_all.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+utils::write.table(top.delta.l, "P5_top_pairs_display_filter.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+utils::write.table(utils::head(top.delta.l, 6L), "P5_Top6.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
 
 if (nrow(top.delta.l) < 20) {
   stop("top.delta.l has fewer than 20 rows after filtering (n = ", nrow(top.delta.l), ").")
@@ -523,7 +595,7 @@ P5.coord <- computeIDelta(
   scope_obj = P5.coord,
   grid_name = grid_name,
   level = "grid",
-  ncores = 64
+  ncores = ncores
 )
 
 idelta_dir <- file.path(grid_dir, "idelta")
@@ -544,4 +616,19 @@ ggsave(
   height = 7,
   units = "in",
   dpi = 600
+)
+
+write_freeze_output_manifest(
+  output_root, "P5", freeze_source, gate_max_abs_L_diff, membership_gate,
+  input_dir = P5.path,
+  roi_file = P5.coord_file,
+  display_mapping_path = display_mapping_path,
+  workflow_path = file.path(script_dir, "P5_workflow.r"),
+  parameters = list(
+    grid_um = grid_um, seed = seed, ncores = ncores,
+    L_permutations = 1000L, delta_permutations = 1000L,
+    delta_adjustment = "BH_universe",
+    display_filter = list(q_Delta = "<0.05", L = ">0", r = "<0.05",
+                          pct1 = ">20", pct2 = ">20")
+  )
 )

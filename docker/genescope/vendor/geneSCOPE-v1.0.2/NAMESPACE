@@ -1,0 +1,72 @@
+useDynLib(geneSCOPE, .registration = TRUE)
+export(addScopeHistology)
+export(addSingleCells)
+export(clusterGenes)
+export(computeCorrelation)
+export(computeDensity)
+export(computeGeneGeneJaccardHeatmap)
+export(computeGeneModuleWithinBetweenTest)
+export(computeIDelta)
+export(computeL)
+export(computeLvsRCurve)
+export(computeMH)
+export(computeWeights)
+export(createSCOPE)
+export(getDendroWalkPaths)
+export(getTopLvsR)
+export(migrateScopeMetadata)
+export(normalizeMoleculesInGrid)
+export(normalizeSingleCells)
+export(plotClusterComparison)
+export(plotDendro)
+export(plotDendroNetwork)
+export(plotDendroNetworkMulti)
+export(plotDendroNetworkWithBranches)
+export(plotDensity)
+export(plotDensityCentroids)
+export(plotGridBoundary)
+export(plotIDelta)
+export(plotLDistribution)
+export(plotLScatter)
+export(plotLvsR)
+export(plotNetwork)
+importFrom(Rcpp, evalCpp)
+importFrom(data.table, CJ, as.data.table, copy, data.table, fifelse, fread,
+           fwrite, is.data.table, rbindlist, set, setDT, setDTthreads,
+           setnames, uniqueN)
+importFrom(dplyr, across, all_of, arrange, bind_rows, case_when, collect,
+           desc, distinct, filter, group_by, if_any, mutate, n, pull, select,
+           slice, slice_head, slice_max, slice_min, summarise, transmute,
+           ungroup)
+importFrom(ggforce, geom_circle, geom_regon, geom_shape)
+importFrom(ggnewscale, new_scale, new_scale_fill)
+importFrom(ggplot2, aes, coord_cartesian, element_blank, element_line,
+           element_rect, element_text, expansion, facet_wrap, geom_area,
+           geom_hline, geom_line, geom_point, geom_vline, ggplot, labs,
+           margin, scale_fill_manual, scale_x_continuous, scale_y_continuous,
+           scale_y_reverse, theme, theme_bw, theme_minimal)
+importFrom(ggrepel, geom_text_repel)
+importFrom(ggraph, create_layout)
+importFrom(grDevices, col2rgb, colorRampPalette, dev.off, hcl.colors, png,
+           rainbow, rgb)
+importFrom(igraph, V, E, ecount)
+importFrom(graphics, layout, legend, par, plot, plot.new, points, text)
+importFrom(Matrix, Diagonal, Matrix, colMeans, colSums, diag, drop0, nnzero,
+           readMM, rowMeans, rowSums, sparseMatrix, summary, t, tcrossprod)
+importFrom(methods, as, is, isClass, new, selectMethod, setClass, setMethod)
+importFrom(parallel, clusterEvalQ, clusterExport, detectCores, makeCluster,
+           mclapply, parLapply, stopCluster)
+importFrom(stats, aggregate, approx, approxfun, coef, complete.cases, density,
+           cor, cutree, hclust, lm, loess, median, na.omit, p.adjust, pnorm,
+           predict, pt, qbeta, quantile, rnorm, runif, runmed, sd, setNames,
+           wilcox.test)
+importFrom(tibble, rownames_to_column)
+importFrom(tidyr, crossing, drop_na, pivot_longer)
+importFrom(tools, file_ext)
+importFrom(utils, combn, globalVariables, head, memory.limit, modifyList,
+           object.size, packageDescription, read.csv, read.table,
+           setTxtProgressBar, txtProgressBar, write.table)
+importFrom(magrittr, "%>%")
+importFrom(grDevices, colorRampPalette, rainbow)
+importFrom(graphics, strheight, strwidth)
+importFrom(methods, as, new)

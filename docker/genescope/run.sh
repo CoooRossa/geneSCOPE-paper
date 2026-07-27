@@ -11,6 +11,9 @@ SAMPLE_SEC="0"
 PARALLEL_BACKEND="serial"
 DATASET_ID=""
 ROI_ID=""
+CLUSTER_PCT="q95"
+N_RESTART="1000"
+PERMS="1000"
 MON_PID=""
 
 while [[ $# -gt 0 ]]; do
@@ -26,6 +29,9 @@ while [[ $# -gt 0 ]]; do
     --parallel_backend) PARALLEL_BACKEND="$2"; shift 2;;
     --dataset_id) DATASET_ID="$2"; shift 2;;
     --roi_id) ROI_ID="$2"; shift 2;;
+    --cluster_pct) CLUSTER_PCT="$2"; shift 2;;
+    --n_restart) N_RESTART="$2"; shift 2;;
+    --perms) PERMS="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 1;;
   esac
 done
@@ -64,7 +70,7 @@ sanitize_positive_int() {
 }
 
 if [[ -z "${DATA_DIR}" || -z "${OUTDIR}" ]]; then
-  echo "Usage: --data_dir <XENIUM_OUTS_DIR> --outdir <OUTDIR> [--coord_file <ROI.csv>] [--grid_um 30] [--ncores 8|--threads 8] [--seed 1] [--sample_sec 1] [--parallel_backend serial] [--dataset_id <id>] [--roi_id <id>]" >&2
+  echo "Usage: --data_dir <XENIUM_OUTS_DIR> --outdir <OUTDIR> [--coord_file <ROI.csv>] [--grid_um 30] [--ncores 8|--threads 8] [--seed 1] [--sample_sec 1] [--parallel_backend serial] [--dataset_id <id>] [--roi_id <id>] [--cluster_pct q95|q99.9] [--n_restart 1000] [--perms 1000]" >&2
   exit 2
 fi
 
@@ -72,6 +78,8 @@ GRID_UM="$(sanitize_positive_int "${GRID_UM}" 30)"
 NCORES="$(sanitize_positive_int "${NCORES}" 8)"
 SEED="$(sanitize_nonneg_int "${SEED}" 1)"
 SAMPLE_SEC="$(sanitize_nonneg_int "${SAMPLE_SEC}" 0)"
+N_RESTART="$(sanitize_positive_int "${N_RESTART}" 1000)"
+PERMS="$(sanitize_positive_int "${PERMS}" 1000)"
 if [[ -z "${PARALLEL_BACKEND}" ]]; then PARALLEL_BACKEND="serial"; fi
 
 mkdir -p "${OUTDIR}"
@@ -97,5 +105,5 @@ fi
 
 micromamba run -n tool Rscript /opt/app/run_genescope_xenium.R \
   "${DATA_DIR}" "${REPDIR}" "${GRID_UM}" "${NCORES}" "${SEED}" "${PARALLEL_BACKEND}" "${COORD_FILE}" \
-  "${DATASET_ID}" "${ROI_ID}" "${OUTDIR}/stats.tsv" \
+  "${DATASET_ID}" "${ROI_ID}" "${OUTDIR}/stats.tsv" "${CLUSTER_PCT}" "${N_RESTART}" "${PERMS}" \
   > "${LOG}" 2>&1

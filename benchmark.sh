@@ -5,25 +5,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="${SCRIPT_DIR}/docker"
 RSCRIPTS_DIR="${SCRIPT_DIR}/benchmark-Rscripts"
 
-OUT_ROOT="${SCRIPT_DIR}/final_out"
+SAMPLE_ID="$(printf '%s' "${SAMPLE_ID:-P5}" | tr '[:lower:]' '[:upper:]')"
+case "${SAMPLE_ID}" in
+  P1|P2|P5|LN) ;;
+  *) echo "[ERROR] SAMPLE_ID must be one of P1, P2, P5, LN (got: ${SAMPLE_ID})" >&2; exit 1;;
+esac
+
+# Every sample has an independent output tree.  This prevents a later sample
+# from silently reusing or overwriting staged outputs from an earlier run.
+OUT_ROOT_BASE="${OUT_ROOT_BASE:-${SCRIPT_DIR}/final_out}"
+OUT_ROOT="${OUT_ROOT_BASE}/${SAMPLE_ID}"
 BENCH_ROOT_DEFAULT="${OUT_ROOT}/for_compare"
 BENCH_ROOT="${BENCH_ROOT:-${BENCH_ROOT_DEFAULT}}" # mapping.R expects: <bench_root>/<method>/repeat_001/edges_all.tsv (staged from tool outputs all_edges.tsv)
 
-OUTS="${OUTS:-/path/to/GSE280314_Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE_outs}"
-ROI_CSV="${ROI_CSV:-/path/to/P5_roi.csv}"
+OUTS="${OUTS:-}"
+case "${SAMPLE_ID}" in
+  P1) ROI_CSV_DEFAULT="${SCRIPT_DIR}/ROI-coordinate-files/P1_roi.csv" ;;
+  P2) ROI_CSV_DEFAULT="${SCRIPT_DIR}/ROI-coordinate-files/P2_roi.csv" ;;
+  P5) ROI_CSV_DEFAULT="${SCRIPT_DIR}/ROI-coordinate-files/P5_roi.csv" ;;
+  LN) ROI_CSV_DEFAULT="${SCRIPT_DIR}/ROI-coordinate-files/lymph_roi.csv" ;;
+esac
+ROI_CSV="${ROI_CSV:-${ROI_CSV_DEFAULT}}"
 ROI_FILENAME="$(basename "${ROI_CSV}")"
 ROI_IN_CONTAINER="/roi/${ROI_FILENAME}"
 
 THREADS="${THREADS:-16}"
 SEED="${SEED:-${seed:-1}}"
-DATASET_ID="${DATASET_ID:-GSE280314_P5}"
-ROI_ID="${ROI_ID:-P5_tumor_region}"
+DATASET_ID="${DATASET_ID:-${SAMPLE_ID}}"
+ROI_ID="${ROI_ID:-${SAMPLE_ID}_roi}"
 N_RUNS="${N_RUNS:-5}"
+
+# Frozen edge-benchmark contract.  geneSCOPE is FDR-filtered for P1/P2 and
+# unfiltered for P5/LN; comparator methods are never FDR-filtered here.
+case "${SAMPLE_ID}" in
+  P1|P2) EDGE_FDR_BY_METHOD="0.05,1,1,1"; CLUSTER_PCT="q95" ;;
+  P5) EDGE_FDR_BY_METHOD="1,1,1,1"; CLUSTER_PCT="q95" ;;
+  LN) EDGE_FDR_BY_METHOD="1,1,1,1"; CLUSTER_PCT="q99.9" ;;
+esac
 
 die() { echo "[ERROR] $*" >&2; exit 1; }
 info() { echo "[INFO] $*" >&2; }
 
-if [[ ! -d "${OUTS}" ]]; then
+if [[ -z "${OUTS}" || ! -d "${OUTS}" ]]; then
   die "OUTS directory not found: ${OUTS}"
 fi
 if [[ ! -f "${ROI_CSV}" ]]; then
@@ -126,7 +149,10 @@ for ((r=1; r<=N_RUNS; r++)); do
     --sample_sec 1 \
     --threads "${THREADS}" \
     --dataset_id "${DATASET_ID}" \
-    --roi_id "${ROI_ID}"
+    --roi_id "${ROI_ID}" \
+    --cluster_pct "${CLUSTER_PCT}" \
+    --n_restart 1000 \
+    --perms 1000
 
   rm -rf "${GENESCOPE_OUT:?}/${REP_NAME}"
   mv "${TMP_OUT}/repeat_001" "${GENESCOPE_OUT}/${REP_NAME}"
@@ -311,8 +337,13 @@ Rscript "${RSCRIPTS_DIR}/edge-level.R" \
   --map_dir "${OUT_ROOT}/string1step" \
   --outdir "${OUT_ROOT}/edge-level" \
   --methods "genescope,giotto,hotspot,seagal" \
+  --ranking_keys "weight" \
+  --weight_scale "none" \
+  --positive_weights_only 1 \
+  --refill_to_top_n_comparable 0 \
   --pr_top_n_list "10,30,50,100,1000" \
-  --edge_fdr_by_method "1,1,1,1" \
+  --top_n_list "10,30,50,100,1000" \
+  --edge_fdr_by_method "${EDGE_FDR_BY_METHOD}" \
   --string_score_threshold 700
 
 Rscript "${RSCRIPTS_DIR}/module-level.R" \

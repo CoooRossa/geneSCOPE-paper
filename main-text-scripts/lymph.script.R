@@ -3,6 +3,21 @@
 library(geneSCOPE)
 library(ggplot2)
 
+script_dir <- local({
+  x <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  if (length(x)) dirname(normalizePath(sub("^--file=", "", x[[1L]]))) else normalizePath(getwd())
+})
+source(file.path(script_dir, "freeze_helpers.R"))
+
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
+  stop("This workflow requires geneSCOPE 1.0.2.")
+}
+freeze_source <- require_freeze_source_metadata()
+gate_max_abs_L_diff <- canonical_lee_s2_gate()
+seed <- integer_env("GENESCOPE_SEED", 1L)
+ncores <- integer_env("GENESCOPE_THREADS", 64L)
+configure_freeze_runtime()
+
 gray_bg_theme <- ggplot2::theme(
   text = ggplot2::element_text(size = 8, face = "plain"),
   plot.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
@@ -18,8 +33,14 @@ gray_bg_theme <- ggplot2::theme(
   axis.text = ggplot2::element_text(size = 8)
 )
 
-Lymph.path <- "/path/to/xenium_lymph_outs"
-Lymph.coord_file <- "/path/to/lymph_roi.csv"
+Lymph.path <- required_directory_env("GENESCOPE_LN_OUTS")
+Lymph.coord_file <- normalizePath(
+  Sys.getenv("GENESCOPE_LN_ROI", file.path(script_dir, "..", "ROI-coordinate-files", "lymph_roi.csv")),
+  mustWork = TRUE
+)
+output_root <- Sys.getenv("GENESCOPE_LN_OUTPUT", file.path(getwd(), "LN_correction_output"))
+output_root <- assert_fresh_output_dir(output_root)
+setwd(output_root)
 
 grid_um <- 30
 grid_name <- paste0("grid", grid_um)
@@ -29,7 +50,7 @@ Lymph.coord <- createSCOPE(
   grid_length = c(grid_um),
   seg_type = "cell",
   coord_file = Lymph.coord_file,
-  ncores = 96
+  ncores = ncores
 )
 
 Lymph.coord <- addSingleCells(
@@ -51,14 +72,23 @@ Lymph.coord <- normalizeMoleculesInGrid(
 
 Lymph.coord <- computeWeights(
   scope_obj = Lymph.coord,
-  grid_name = grid_name
+  grid_name = grid_name,
+  style = "B",
+  topology = "auto",
+  store_mat = TRUE,
+  store_listw = TRUE,
+  ncores = ncores
 )
 
+reset_freeze_rng(seed)
 Lymph.coord <- computeL(
   scope_obj = Lymph.coord,
   use_bigmemory = FALSE,
   grid_name = grid_name,
-  ncores = 64
+  ncores = ncores,
+  perms = 1000,
+  use_blocks = FALSE,
+  norm_layer = "Xz"
 )
 
 Lymph.coord <- computeCorrelation(
@@ -67,15 +97,17 @@ Lymph.coord <- computeCorrelation(
   layer = "logCPM",
   method = "pearson",
   blocksize = 2000,
-  ncores = 64
+  ncores = ncores
 )
 
 curve_name <- paste0("LR_curve_", grid_um)
+reset_freeze_rng(seed)
 Lymph.coord <- computeLvsRCurve(
   scope_obj = Lymph.coord,
   level = "cell",
   grid_name = grid_name,
-  ncores = 64,
+  ncores = ncores,
+  B = 1000,
   downsample = 0.05,
   k_max = 2000,
   n_strata = 1000,
@@ -121,7 +153,7 @@ ggsave(
 
 options(future.globals.maxSize = 500000 * 1024^2)
 
-pct_mins <- c("q95.0", "q99.9")
+pct_mins <- "q99.9"
 cluster_cols <- paste0(pct_mins, "_res0.1_grid", grid_um, "_log1p_freq0.95")
 
 network_dir <- file.path(".", paste0("grid", grid_um), "network")
@@ -131,6 +163,7 @@ for (idx in seq_along(pct_mins)) {
   pct_min <- pct_mins[[idx]]
   cluster_col <- cluster_cols[[idx]]
 
+  reset_freeze_rng(seed)
   Lymph.coord <- clusterGenes(
     scope_obj = Lymph.coord,
     grid_name = grid_name,
@@ -143,9 +176,25 @@ for (idx in seq_along(pct_mins)) {
     use_log1p_weight = TRUE,
     use_consensus = TRUE,
     consensus_thr = 0.95,
-    n_restart = 1000
+    n_restart = 1000,
+    ncores = ncores
   )
 
+  display_mapping_path <- file.path(
+    script_dir, "..", "correction-analysis", "display-mappings", "LN_display_mapping.tsv"
+  )
+  display_mapping <- read_display_mapping(script_dir, "LN")
+  Lymph.coord@meta.data[[paste0(cluster_col, "_raw")]] <- as.character(
+    Lymph.coord@meta.data[[cluster_col]]
+  )
+  membership_gate <- assert_reference_membership(
+    script_dir, "LN", rownames(Lymph.coord@meta.data),
+    Lymph.coord@meta.data[[paste0(cluster_col, "_raw")]]
+  )
+  Lymph.coord@meta.data[[cluster_col]] <- apply_display_mapping(
+    Lymph.coord@meta.data[[paste0(cluster_col, "_raw")]], display_mapping
+  )
+  cluster_palette <- display_palette(display_mapping)
   Lymph.coord@meta.data[[cluster_col]] <- factor(
     Lymph.coord@meta.data[[cluster_col]],
     levels = as.character(sort(unique(na.omit(Lymph.coord@meta.data[[cluster_col]]))))
@@ -158,6 +207,7 @@ for (idx in seq_along(pct_mins)) {
     use_consensus_graph = TRUE,
     graph_slot_name = cluster_col,
     cluster_vec = cluster_col,
+    cluster_palette = cluster_palette,
     show_sign = TRUE,
     drop_isolated = TRUE,
     neg_linetype = "dashed",
@@ -181,6 +231,7 @@ for (idx in seq_along(pct_mins)) {
     use_consensus_graph = TRUE,
     graph_slot_name = cluster_col,
     cluster_vec = cluster_col,
+    cluster_palette = cluster_palette,
     IDelta_col_name = NULL,
     node_size = 4,
     edge_width = 3,
@@ -218,6 +269,33 @@ for (idx in seq_along(pct_mins)) {
     dpi = 600
   )
 }
+
+reset_freeze_rng(seed)
+top.delta.all <- getTopLvsR(
+  scope_obj = Lymph.coord,
+  grid_name = grid_name,
+  pear_level = "cell",
+  L_range = c(0.0, 1),
+  top_n = 100000,
+  ncores = ncores,
+  direction = "largest",
+  do_perm = TRUE,
+  perms = 1000,
+  use_blocks = FALSE,
+  p_adj_mode = "BH_universe",
+  pval_mode = "uniform",
+  curve_layer = curve_name,
+  CI_rule = "remove_within"
+)
+assert_complete_delta_universe(top.delta.all)
+top.delta.l <- filter_display_pairs(top.delta.all)
+assert_reference_top6(
+  file.path(script_dir, "..", "correction-analysis"), "LN", top.delta.l
+)
+
+utils::write.table(top.delta.all, "LN_top_pairs_all.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+utils::write.table(top.delta.l, "LN_top_pairs_display_filter.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+utils::write.table(utils::head(top.delta.l, 6L), "LN_Top6.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
 
 density_genes <- c("ITGB2", "PDGFRA", "PTPN6")
 for (gene in density_genes) {
@@ -365,3 +443,17 @@ ggsave(
   dpi = 600
 )
 
+write_freeze_output_manifest(
+  output_root, "LN", freeze_source, gate_max_abs_L_diff, membership_gate,
+  input_dir = Lymph.path,
+  roi_file = Lymph.coord_file,
+  display_mapping_path = display_mapping_path,
+  workflow_path = file.path(script_dir, "lymph.script.R"),
+  parameters = list(
+    grid_um = grid_um, seed = seed, ncores = ncores,
+    L_permutations = 1000L, delta_permutations = 1000L,
+    delta_adjustment = "BH_universe",
+    display_filter = list(q_Delta = "<0.05", L = ">0", r = "<0.05",
+                          pct1 = ">20", pct2 = ">20")
+  )
+)

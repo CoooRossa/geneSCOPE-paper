@@ -1,0 +1,5 @@
+sample_id	roi_file	grid_um	cluster_pct	resolution	consensus_threshold	n_restart	top_n	expected_modules	expected_assigned
+P1	../ROI-coordinate-files/P1_roi.csv	30	q95	0.1	0.95	1000	100000	19	177
+P2	../ROI-coordinate-files/P2_roi.csv	30	q95	0.1	0.95	1000	100000	28	195
+P5	../ROI-coordinate-files/P5_roi.csv	30	q95	0.1	0.95	1000	100000	27	175
+LN	../ROI-coordinate-files/lymph_roi.csv	30	q99.9	0.1	0.95	1000	100000	15	252

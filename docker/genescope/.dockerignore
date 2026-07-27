@@ -1,6 +1,11 @@
 .DS_Store
 **/.DS_Store
 
-geneSCOPE/.git
-geneSCOPE/.github
+# The historical v1.0.0 snapshot is retained in git for provenance only.  It is
+# never sent to or installed by the correction image.
+geneSCOPE/
 
+# Local build products are not part of a frozen source snapshot.
+vendor/geneSCOPE-v1.0.2/.git/
+vendor/geneSCOPE-v1.0.2/*.tar.gz
+vendor/geneSCOPE-v1.0.2/*.Rcheck/
