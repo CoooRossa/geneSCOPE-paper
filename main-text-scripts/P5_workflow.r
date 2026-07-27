@@ -75,7 +75,8 @@ P5.coord <- computeWeights(
   style = "B",
   topology = "auto",
   store_mat = TRUE,
-  store_listw = TRUE,
+  # The downstream workflow uses the frozen W matrix, not an spdep listw copy.
+  store_listw = FALSE,
   ncores = ncores
 )
 
