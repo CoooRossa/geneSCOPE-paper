@@ -34,6 +34,11 @@ gray_bg_theme <- ggplot2::theme(
 )
 
 P5.path <- required_directory_env("GENESCOPE_P5_OUTS")
+P5.scope_file <- required_file_env("GENESCOPE_P5_SCOPE_RDS")
+P5.top_pairs_file <- required_file_env("GENESCOPE_P5_TOP_PAIRS")
+P5.analysis_manifest_file <- normalizePath(
+  file.path(dirname(P5.scope_file), "manifest.json"), mustWork = TRUE
+)
 P5.coord_file <- normalizePath(
   Sys.getenv("GENESCOPE_P5_ROI", file.path(script_dir, "..", "ROI-coordinate-files", "P5_roi.csv")),
   mustWork = TRUE
@@ -43,77 +48,32 @@ output_root <- assert_fresh_output_dir(output_root)
 setwd(output_root)
 grid_um <- 30
 grid_name <- paste0("grid", grid_um)
-
-P5.coord <- createSCOPE(
-  data_dir = P5.path,
-  grid_length = c(30),
-  seg_type = "cell",
-  coord_file = P5.coord_file,
-  ncores = ncores
+raw_input_gate <- assert_reference_raw_inputs(
+  script_dir, "P5", P5.path, P5.coord_file
 )
-
-P5.coord <- addSingleCells(
-  scope_obj = P5.coord,
-  xenium_dir = P5.path
+curve_name <- paste0("LR_curve_", grid_um, "_shuffle")
+authoritative_cluster_col <- "shuffle_q95_res0.1_grid30"
+analysis_sources <- list(
+  scope = assert_reference_artifact(
+    script_dir, "MAIN_RESULTS", "P5/P5_scope_shuffle_v102.rds", P5.scope_file
+  ),
+  top_pairs = assert_reference_artifact(
+    script_dir, "MAIN_RESULTS", "P5/P5_toplvsr_all_shuffleFDR.tsv",
+    P5.top_pairs_file
+  ),
+  analysis_manifest = assert_reference_artifact(
+    script_dir, "MAIN_RESULTS", "P5/manifest.json", P5.analysis_manifest_file
+  )
 )
-
-P5.coord <- normalizeSingleCells(
-  scope_obj = P5.coord,
-  input_layer = "counts",
-  output_layer = "logCPM",
-  scale_factor = 1e4
+analysis_provenance_gate <- assert_analysis_provenance(
+  "P5", P5.analysis_manifest_file, top_pair_rows = 1578L
 )
-
-P5.coord <- normalizeMoleculesInGrid(
-  scope_obj = P5.coord,
-  grid_name = grid_name
+P5.coord <- readRDS(P5.scope_file)
+analysis_scope_gate <- assert_authoritative_scope(
+  P5.coord, "P5", grid_name, curve_name, authoritative_cluster_col
 )
-
-P5.coord <- computeWeights(
-  scope_obj = P5.coord,
-  grid_name = grid_name,
-  style = "B",
-  topology = "auto",
-  store_mat = TRUE,
-  # The downstream workflow uses the frozen W matrix, not an spdep listw copy.
-  store_listw = FALSE,
-  ncores = ncores
-)
-
-reset_freeze_rng(seed)
-P5.coord <- computeL(
-  scope_obj = P5.coord,
-  use_bigmemory = FALSE,
-  grid_name = grid_name,
-  ncores = ncores,
-  perms = 1000,
-  use_blocks = FALSE,
-  norm_layer = "Xz"
-)
-
-P5.coord <- computeCorrelation(
-  scope_obj = P5.coord,
-  level = "cell",
-  layer = "logCPM",
-  method = "pearson",
-  blocksize = 2000,
-  ncores = ncores
-)
-
-curve_name <- paste0("LR_curve_", grid_um)
-reset_freeze_rng(seed)
-P5.coord <- computeLvsRCurve(
-  scope_obj = P5.coord,
-  level = "cell",
-  grid_name = grid_name,
-  ncores = ncores,
-  B = 1000,
-  downsample = 0.05,
-  k_max = 2000,
-  n_strata = 1000,
-  min_rel_width = 0.15,
-  widen_span = 0.1,
-  curve_name = curve_name
+raw_identity_gate <- assert_scope_xenium_identity(
+  P5.coord, P5.path, P5.coord_file, "P5"
 )
 
 p_lvsr <- plotLvsR(
@@ -154,29 +114,12 @@ ggsave(
 options(future.globals.maxSize = 500000 * 1024^2)
 
 cluster_col <- paste0("q95_res0.1_grid", grid_um, "_log1p_freq0.95")
-reset_freeze_rng(seed)
-P5.coord <- clusterGenes(
-  scope_obj = P5.coord,
-  grid_name = grid_name,
-  L_min = 0,
-  algo = "leiden",
-  resolution = 0.10,
-  pct_min = "q95",
-  cluster_name = cluster_col,
-  graph_slot_name = cluster_col,
-  use_log1p_weight = TRUE,
-  use_consensus = TRUE,
-  consensus_thr = 0.95,
-  n_restart = 1000,
-  ncores = ncores
-)
-
 display_mapping_path <- file.path(
   script_dir, "..", "correction-analysis", "display-mappings", "P5_display_mapping.tsv"
 )
 display_mapping <- read_display_mapping(script_dir, "P5")
 P5.coord@meta.data[[paste0(cluster_col, "_raw")]] <- as.character(
-  P5.coord@meta.data[[cluster_col]]
+  P5.coord@meta.data[[authoritative_cluster_col]]
 )
 membership_gate <- assert_reference_membership(
   script_dir, "P5", rownames(P5.coord@meta.data),
@@ -199,7 +142,7 @@ p_network <- plotNetwork(
   lee_stats_layer = "LeeStats_Xz",
   grid_name = grid_name,
   use_consensus_graph = TRUE,
-  graph_slot_name = cluster_col,
+  graph_slot_name = authoritative_cluster_col,
   cluster_vec = cluster_col,
   cluster_palette = cluster_palette,
   show_sign = TRUE,
@@ -223,7 +166,7 @@ dendro_out <- plotDendroNetwork(
   lee_stats_layer = "LeeStats_Xz",
   grid_name = grid_name,
   use_consensus_graph = TRUE,
-  graph_slot_name = cluster_col,
+  graph_slot_name = authoritative_cluster_col,
   cluster_vec = cluster_col,
   cluster_palette = cluster_palette,
   IDelta_col_name = NULL,
@@ -482,30 +425,18 @@ for (gene in cluster_genes) {
   )
 }
 
-reset_freeze_rng(seed)
-top.delta.all <- getTopLvsR(
-  scope_obj = P5.coord,
-  grid_name = grid_name,
-  pear_level = "cell",
-  L_range = c(0.0, 1),
-  top_n = 100000,
-  ncores = ncores,
-  direction = "largest",
-  do_perm = TRUE,
-  perms = 1000,
-  use_blocks = FALSE,
-  p_adj_mode = "BH_universe",
-  pval_mode = "uniform",
-  curve_layer = curve_name,
-  CI_rule = "remove_within"
+top.delta.all <- read_authoritative_top_pairs(
+  P5.top_pairs_file, "P5", expected_rows = 1578L
 )
-assert_complete_delta_universe(top.delta.all)
+pair_scope_gate <- assert_scope_pair_table(P5.coord, top.delta.all, "P5")
 top.delta.l <- filter_display_pairs(top.delta.all)
 assert_reference_top6(
   file.path(script_dir, "..", "correction-analysis"), "P5", top.delta.l
 )
 
-utils::write.table(top.delta.all, "P5_top_pairs_all.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+if (!file.copy(P5.top_pairs_file, "P5_top_pairs_all.tsv", overwrite = FALSE)) {
+  stop("Could not copy the authoritative P5 pair table into the figure bundle.")
+}
 utils::write.table(top.delta.l, "P5_top_pairs_display_filter.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
 utils::write.table(utils::head(top.delta.l, 6L), "P5_Top6.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
 
@@ -602,13 +533,6 @@ dev.off()
 message("Saved: ", out_file)
 
 # ---- I_delta by cluster ----
-P5.coord <- computeIDelta(
-  scope_obj = P5.coord,
-  grid_name = grid_name,
-  level = "grid",
-  ncores = ncores
-)
-
 idelta_dir <- file.path(grid_dir, "idelta")
 dir.create(idelta_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -650,8 +574,15 @@ write_freeze_output_manifest(
   roi_file = P5.coord_file,
   display_mapping_path = display_mapping_path,
   workflow_path = file.path(script_dir, "P5_workflow.r"),
+  analysis_sources = analysis_sources,
   parameters = list(
     grid_um = grid_um, seed = seed, ncores = ncores,
+    analysis_mode = "render_from_hash_pinned_authoritative_results",
+    display_derivations = "computeDensity_only",
+    authoritative_scope_gate = analysis_scope_gate,
+    raw_identity_gate = raw_identity_gate,
+    analysis_provenance_gate = analysis_provenance_gate,
+    pair_scope_gate = pair_scope_gate,
     L_permutations = 1000L, delta_permutations = 1000L,
     delta_adjustment = "BH_universe",
     display_filter = list(q_Delta = "<0.05", L = ">0", r = "<0.05",

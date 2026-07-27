@@ -157,15 +157,21 @@ Correction figure workflows also install and verify the same vendored package:
 
 ```bash
 GENESCOPE_P5_OUTS="/absolute/path/to/P5/outs" \
+GENESCOPE_P5_SCOPE_RDS="/absolute/path/to/P5_scope_shuffle_v102.rds" \
+GENESCOPE_P5_TOP_PAIRS="/absolute/path/to/P5_toplvsr_all_shuffleFDR.tsv" \
 bash main-text-scripts/run_frozen_workflow.sh P5
 
 GENESCOPE_LN_OUTS="/absolute/path/to/LN/outs" \
+GENESCOPE_LN_SCOPE_RDS="/absolute/path/to/LN_scope_shuffle_v102.rds" \
+GENESCOPE_LN_TOP_PAIRS="/absolute/path/to/LN_top_pairs_complete_delta_v102.tsv" \
 bash main-text-scripts/run_frozen_workflow.sh LN
 ```
 
 These entry points require a clean paper commit, generate in a new staging
-directory, record raw-input/ROI/mapping/workflow hashes, verify the complete
-bundle, and publish the figure directory only after every freeze gate succeeds.
+directory, record raw-input/ROI/mapping/workflow hashes, and render only from
+the hash-pinned authoritative analysis objects and complete pair tables. They
+verify the complete bundle and publish the figure directory only after every
+freeze gate succeeds.
 
 ## Outputs
 

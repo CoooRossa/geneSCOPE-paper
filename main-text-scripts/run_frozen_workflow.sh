@@ -17,7 +17,7 @@ case "${SAMPLE_ID}" in
     WORKFLOW_SCRIPT="${SCRIPT_DIR}/lymph.script.R"
     ;;
   *)
-    echo "Usage: $0 P5|LN (with the matching GENESCOPE_<sample>_OUTS set)" >&2
+    echo "Usage: $0 P5|LN (set matching OUTS, SCOPE_RDS, and TOP_PAIRS variables)" >&2
     exit 2
     ;;
 esac
@@ -58,6 +58,7 @@ Rscript --vanilla "${PAPER_ROOT}/docker/genescope/freeze_assertions.R" 1.0.2
 Rscript --vanilla "${WORKFLOW_SCRIPT}"
 Rscript --vanilla "${PAPER_ROOT}/correction-analysis/verify_figure_bundle.R" \
   "${WORKFLOW_OUTPUT}" "${SAMPLE_ID}"
+rm -rf -- "${WORKFLOW_OUTPUT}/.geneSCOPE-v1.0.2-library"
 mv "${WORKFLOW_OUTPUT}" "${FINAL_WORKFLOW_OUTPUT}"
 WORKFLOW_OUTPUT=""
 trap - EXIT
