@@ -533,7 +533,8 @@ for (sample in samples) {
   }
 
   # The original geneSCOPE gene list is retained as an unassigned benchmark
-  # universe, while its module IDs are replaced by the v1.0.2 memberships.
+  # universe, while its module IDs are replaced by the historical v1.0.2
+  # candidate memberships that underlie the audited result series.
   # This keeps comparator inputs and their published Monte Carlo baselines frozen.
   background_union <- unique(c(
     staged$gene,
@@ -599,12 +600,13 @@ for (sample in samples) {
     parameters = list(n_random = 200000L, seed = 1L, min_module_genes = 3L,
                       string_score_threshold = 700L),
     correction_scope = paste(
-      "geneSCOPE modules recomputed from v1.0.2 membership; comparator module rows and",
+      "geneSCOPE modules recomputed from the historical v1.0.2 candidate membership;",
+      "comparator module rows and",
       "Monte Carlo summaries reused only after exact input-hash and parameter validation."
     ),
     background_strategy = paste(
       "Frozen published benchmark gene universe retained; old geneSCOPE module IDs reset",
-      "to -1 and replaced with v1.0.2 assignments."
+      "to -1 and replaced with the historical v1.0.2 candidate assignments."
     ),
     background_size = length(background_union),
     files = list(

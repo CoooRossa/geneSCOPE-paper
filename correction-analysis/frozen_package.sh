@@ -51,7 +51,7 @@ prepare_frozen_genescope() {
 
   correction_dir="${FROZEN_PACKAGE_SCRIPT_DIR}"
   paper_root="$(cd "${correction_dir}/.." && pwd)"
-  vendor_dir="${paper_root}/docker/genescope/vendor/geneSCOPE-v1.0.2"
+  vendor_dir="${paper_root}/docker/genescope/vendor/geneSCOPE-v1.2.0"
   if [[ ! -f "${vendor_dir}/DESCRIPTION" ]]; then
     echo "Frozen geneSCOPE vendor is missing: ${vendor_dir}" >&2
     return 2
@@ -74,12 +74,12 @@ prepare_frozen_genescope() {
   fi
 
   mkdir -p "${result_root}"
-  freeze_lib="${result_root}/.geneSCOPE-v1.0.2-library"
+  freeze_lib="${result_root}/.geneSCOPE-v1.2.0-library"
   mkdir -p "${freeze_lib}"
   # Reinstall on every invocation. R CMD INSTALL stages and replaces the
   # package directory, so a stale or locally modified cached install is never
   # trusted merely because a marker file is present.
-  install_tmp="$(mktemp -d "${TMPDIR:-/tmp}/genescope-v102-install.XXXXXX")"
+  install_tmp="$(mktemp -d "${TMPDIR:-/tmp}/genescope-v120-install.XXXXXX")"
   install_source="${install_tmp}/geneSCOPE"
   mkdir -p "${install_source}"
   rsync -a "${vendor_dir}/" "${install_source}/"

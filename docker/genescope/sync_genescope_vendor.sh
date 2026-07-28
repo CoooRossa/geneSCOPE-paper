@@ -3,17 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="${1:-}"
-TARGET_DIR="${SCRIPT_DIR}/vendor/geneSCOPE-v1.0.2"
+TARGET_DIR="${SCRIPT_DIR}/vendor/geneSCOPE-v1.2.0"
 
 if [[ -z "${SOURCE_DIR}" || ! -f "${SOURCE_DIR}/DESCRIPTION" ]]; then
-  echo "Usage: $0 /absolute/path/to/geneSCOPE-v1.0.2" >&2
+  echo "Usage: $0 /absolute/path/to/geneSCOPE-v1.2.0" >&2
   exit 2
 fi
 
 SOURCE_DIR="$(cd "${SOURCE_DIR}" && pwd)"
 SOURCE_VERSION="$(sed -n 's/^Version:[[:space:]]*//p' "${SOURCE_DIR}/DESCRIPTION")"
-if [[ "${SOURCE_VERSION}" != "1.0.2" ]]; then
-  echo "Refusing source with Version=${SOURCE_VERSION}; expected 1.0.2" >&2
+if [[ "${SOURCE_VERSION}" != "1.2.0" ]]; then
+  echo "Refusing source with Version=${SOURCE_VERSION}; expected 1.2.0" >&2
   exit 2
 fi
 if ! grep -Fq 'return arma::dot(row_sums, row_sums);' "${SOURCE_DIR}/src/2.LeeL.cpp"; then

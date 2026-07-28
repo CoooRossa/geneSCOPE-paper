@@ -19,8 +19,8 @@ input_dir <- normalizePath(args[[1L]], mustWork = TRUE)
 result_root <- normalizePath(args[[2L]], mustWork = FALSE)
 ncores <- if (length(args) >= 3L) as.integer(args[[3L]]) else 8L
 if (!is.finite(ncores) || ncores < 1L) stop("NCORES must be a positive integer.")
-if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
-  stop("The P5 multiscale workflow requires geneSCOPE 1.0.2.")
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("The P5 multiscale workflow requires geneSCOPE 1.2.0.")
 }
 if (!identical(formals(geneSCOPE::computeL)$use_blocks, FALSE)) {
   stop("computeL() global-shuffle default is not frozen.")
@@ -131,9 +131,15 @@ for (i in seq_len(nrow(anchors))) {
     completed_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     sample_id = "P5",
     grid_um = grid_um,
+    artifact_series = "v102",
     package_version = as.character(utils::packageVersion("geneSCOPE")),
     package_source_commit = freeze_source$source_commit,
     package_vendor_tree_sha256 = freeze_source$vendor_tree_sha256,
+    reference_provenance = list(
+      artifact_series = "v102",
+      candidate_package_version = "1.0.2",
+      note = "The v102 token identifies the frozen historical candidate-result series."
+    ),
     paper_workflow_commit = paper_commit,
     gate_max_abs_L_diff = gate_max_abs_L_diff,
     formula_id = lee_meta$formula_id,

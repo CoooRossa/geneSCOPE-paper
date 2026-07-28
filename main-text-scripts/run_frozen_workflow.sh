@@ -65,11 +65,11 @@ else
 fi
 
 prepare_frozen_genescope "${WORKFLOW_OUTPUT}"
-Rscript --vanilla "${PAPER_ROOT}/docker/genescope/freeze_assertions.R" 1.0.2
+Rscript --vanilla "${PAPER_ROOT}/docker/genescope/freeze_assertions.R" 1.2.0
 Rscript --vanilla "${WORKFLOW_SCRIPT}"
 Rscript --vanilla "${PAPER_ROOT}/correction-analysis/verify_figure_bundle.R" \
   "${WORKFLOW_OUTPUT}" "${SAMPLE_ID}"
-rm -rf -- "${WORKFLOW_OUTPUT}/.geneSCOPE-v1.0.2-library"
+rm -rf -- "${WORKFLOW_OUTPUT}/.geneSCOPE-v1.2.0-library"
 if [[ -e "${FINAL_WORKFLOW_OUTPUT}" || -L "${FINAL_WORKFLOW_OUTPUT}" ]]; then
   echo "Refusing to publish over a newly created output path: ${FINAL_WORKFLOW_OUTPUT}" >&2
   exit 2

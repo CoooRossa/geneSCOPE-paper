@@ -2,8 +2,8 @@ FROM mambaorg/micromamba:1.5.8
 
 # The release source is vendored deliberately so that a rebuild does not depend
 # on the state of a remote branch.  Populate it with sync_genescope_vendor.sh.
-ARG GENESCOPE_LOCAL=vendor/geneSCOPE-v1.0.2
-ARG GENESCOPE_VERSION=1.0.2
+ARG GENESCOPE_LOCAL=vendor/geneSCOPE-v1.2.0
+ARG GENESCOPE_VERSION=1.2.0
 
 # ---- create conda env with R + deps ----
 COPY --chown=$MAMBA_USER:$MAMBA_USER env.yaml /tmp/env.yaml

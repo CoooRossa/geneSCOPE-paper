@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
 args <- commandArgs(trailingOnly = TRUE)
-expected_version <- if (length(args)) args[[1L]] else "1.0.2"
+expected_version <- if (length(args)) args[[1L]] else "1.2.0"
 
 suppressPackageStartupMessages({
   library(geneSCOPE)

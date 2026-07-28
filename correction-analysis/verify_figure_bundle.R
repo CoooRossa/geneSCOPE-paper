@@ -17,8 +17,8 @@ output_root <- normalizePath(args[[1L]], mustWork = TRUE)
 sample_id <- toupper(args[[2L]])
 if (!sample_id %in% c("P5", "LN")) stop("Sample must be P5 or LN.")
 if (!requireNamespace("jsonlite", quietly = TRUE)) stop("jsonlite is required.")
-if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
-  stop("The verifier must run with the frozen geneSCOPE 1.0.2 package.")
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("The verifier must run with the frozen geneSCOPE 1.2.0 package.")
 }
 
 manifest_path <- file.path(output_root, paste0(sample_id, "_figure_manifest.json"))
@@ -55,8 +55,12 @@ assert_recorded_gate <- function(recorded, observed, label,
 }
 
 if (!identical(scalar(manifest$sample_id), sample_id) ||
-    !identical(scalar(manifest$package_version), "1.0.2")) {
+    !identical(scalar(manifest$package_version), "1.2.0")) {
   stop("Figure manifest sample or package version mismatch.")
+}
+if (!identical(scalar(manifest$reference_provenance$artifact_series), "v102") ||
+    !identical(scalar(manifest$reference_provenance$package_version), "1.0.2")) {
+  stop("Figure manifest historical reference provenance mismatch.")
 }
 if (!identical(scalar(manifest$parameters$analysis_mode),
                "render_from_hash_pinned_authoritative_results") ||
@@ -148,7 +152,7 @@ if (!identical(scalar(manifest$paper_workflow_commit), paper_commit[[1L]])) {
   stop("Figure manifest paper commit does not match the current commit.")
 }
 
-vendor_dir <- file.path(paper_root, "docker", "genescope", "vendor", "geneSCOPE-v1.0.2")
+vendor_dir <- file.path(paper_root, "docker", "genescope", "vendor", "geneSCOPE-v1.2.0")
 source_commit <- trimws(readLines(file.path(vendor_dir, ".freeze-source-commit"), warn = FALSE))
 vendor_tree <- trimws(readLines(file.path(vendor_dir, ".freeze-tree-sha256"), warn = FALSE))
 if (!identical(scalar(manifest$package_source_commit), source_commit) ||

@@ -74,7 +74,7 @@ bundle_file_inventory <- function(output_root, manifest_path = NULL) {
     all.files = TRUE, no.. = TRUE, include.dirs = TRUE
   )
   relative <- substring(entries, nchar(output_root) + 2L)
-  keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library(/|$)", relative)
+  keep <- !grepl("^\\.geneSCOPE-v1\\.2\\.0-library(/|$)", relative)
   entries <- entries[keep]
   relative <- relative[keep]
   symbolic_links <- nzchar(Sys.readlink(entries))
@@ -714,7 +714,7 @@ require_paper_commit_metadata <- function() {
 }
 
 assert_fresh_output_dir <- function(path,
-                                    allowed_entries = ".geneSCOPE-v1.0.2-library") {
+                                    allowed_entries = ".geneSCOPE-v1.2.0-library") {
   dir.create(path, recursive = TRUE, showWarnings = FALSE)
   path <- normalizePath(path, mustWork = TRUE)
   entries <- list.files(path, all.files = TRUE, no.. = TRUE)
@@ -998,7 +998,7 @@ assert_required_figure_outputs <- function(output_root, sample_id,
   )
   files <- files[file.exists(files) & !dir.exists(files)]
   relative <- substring(files, nchar(output_root) + 2L)
-  keep <- !grepl("^\\.geneSCOPE-v1\\.0\\.2-library/", relative)
+  keep <- !grepl("^\\.geneSCOPE-v1\\.2\\.0-library/", relative)
   files <- files[keep]
   relative <- relative[keep]
   png_files <- files[grepl("\\.png$", relative, ignore.case = TRUE)]
@@ -1090,6 +1090,11 @@ write_freeze_output_manifest <- function(output_root, sample_id, freeze_source,
     package_version = as.character(utils::packageVersion("geneSCOPE")),
     package_source_commit = freeze_source$source_commit,
     package_vendor_tree_sha256 = freeze_source$vendor_tree_sha256,
+    reference_provenance = list(
+      artifact_series = "v102",
+      package_version = "1.0.2",
+      sources = analysis_sources
+    ),
     paper_workflow_commit = paper_commit,
     workflow = list(path = workflow_path, sha256 = sha256_file(workflow_path)),
     gate_max_abs_L_diff = formula_gate,

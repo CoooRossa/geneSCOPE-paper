@@ -27,24 +27,27 @@ This repository does **not** include raw Xenium datasets; you must provide your 
 
 ## Frozen geneSCOPE source
 
-The audited geneSCOPE `main` line is version **1.0.2**. The workflows below pin
+The audited geneSCOPE `main` line is version **1.2.0**. The workflows below pin
 an exact commit from that line rather than relying on a moving branch name.
 
-The geneSCOPE image installs an exact local **v1.0.2** source snapshot from
-`docker/genescope/vendor/geneSCOPE-v1.0.2`. It does not install the historical
+The geneSCOPE image installs an exact local **v1.2.0** source snapshot from
+`docker/genescope/vendor/geneSCOPE-v1.2.0`. It does not install the historical
 v1.0.0 tree at `docker/genescope/geneSCOPE/`, and it does not follow a mutable
 remote branch during the build.
 
-After the v1.0.2 package candidate has passed its own checks, synchronize it into
+After the v1.2.0 package has passed its own checks, synchronize it into
 this repository once:
 
 ```bash
-bash docker/genescope/sync_genescope_vendor.sh /absolute/path/to/geneSCOPE-v1.0.2
+bash docker/genescope/sync_genescope_vendor.sh /absolute/path/to/geneSCOPE-v1.2.0
 ```
 
 The Docker build then runs independent assertions for the package version, API
 defaults, and the native canonical Lee S2 calculation. A build fails if any
 assertion differs from the frozen contract.
+
+The `v102` token retained in historical artifact paths identifies the frozen
+candidate-result series; it does not denote the final package release version.
 
 ## Inputs
 

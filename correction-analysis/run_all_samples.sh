@@ -7,7 +7,7 @@ THREADS="${THREADS:-8}"
 source "${SCRIPT_DIR}/frozen_package.sh"
 require_clean_paper_commit
 prepare_frozen_genescope "${RESULT_ROOT}"
-Rscript --vanilla "${SCRIPT_DIR}/../docker/genescope/freeze_assertions.R" 1.0.2
+Rscript --vanilla "${SCRIPT_DIR}/../docker/genescope/freeze_assertions.R" 1.2.0
 
 for sample_id in P1 P2 P5 LN; do
   input_var="GENESCOPE_${sample_id}_OUTS"

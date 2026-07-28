@@ -1,7 +1,7 @@
 Package: geneSCOPE
 Type: Package
 Title: geneSCOPE: gene Spatial Co-Occurrence of Pairwise Expression
-Version: 1.0.2
+Version: 1.2.0
 Depends: R (>= 4.4.1)
 Author: Shicheng Zhang <0322704@ed.tus.ac.jp>
 Maintainer: Shicheng Zhang <0322704@ed.tus.ac.jp>

@@ -465,8 +465,25 @@ validate_p5_scale_manifest <- function(m, manifest_path, grid_um) {
   if (!new_schema) return(invisible(NULL))
 
   package_version <- if (is.null(m$package_version)) "" else as.character(m$package_version)
-  record(identical(package_version, "1.0.2"), paste0(label, " package version"),
+  record(identical(package_version, "1.2.0"), paste0(label, " package version"),
          package_version)
+  if (is.null(m$reference_provenance)) {
+    record(FALSE, paste0(label, " historical reference provenance"), "missing")
+  } else {
+    reference_series <- if (is.null(m$reference_provenance$artifact_series)) {
+      ""
+    } else as.character(m$reference_provenance$artifact_series)
+    reference_version <- if (!is.null(m$reference_provenance$package_version)) {
+      as.character(m$reference_provenance$package_version)
+    } else if (!is.null(m$reference_provenance$candidate_package_version)) {
+      as.character(m$reference_provenance$candidate_package_version)
+    } else ""
+    record(
+      identical(reference_series, "v102") && identical(reference_version, "1.0.2"),
+      paste0(label, " historical reference provenance"),
+      paste0(reference_series, "/", reference_version)
+    )
+  }
   source_commit <- if (is.null(m$package_source_commit)) "" else m$package_source_commit
   vendor_sha <- if (is.null(m$package_vendor_tree_sha256)) "" else m$package_vendor_tree_sha256
   record(is.character(source_commit) && length(source_commit) == 1L &&

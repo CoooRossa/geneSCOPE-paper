@@ -9,8 +9,8 @@ script_dir <- local({
 })
 source(file.path(script_dir, "freeze_helpers.R"))
 
-if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
-  stop("This workflow requires geneSCOPE 1.0.2.")
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("This workflow requires geneSCOPE 1.2.0.")
 }
 freeze_source <- require_freeze_source_metadata()
 gate_max_abs_L_diff <- canonical_lee_s2_gate()

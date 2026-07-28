@@ -31,13 +31,13 @@ roi_file <- normalizePath(file.path(script_dir, cfg$roi_file), mustWork = TRUE)
 out_dir <- file.path(result_root, sample_id)
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
-  stop("The correction workflow requires geneSCOPE 1.0.2.")
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("The correction workflow requires geneSCOPE 1.2.0.")
 }
 if (!identical(formals(geneSCOPE::computeL)$use_blocks, FALSE) ||
     !identical(formals(geneSCOPE::getTopLvsR)$use_blocks, FALSE) ||
     !identical(eval(formals(geneSCOPE::getTopLvsR)$p_adj_mode)[[1L]], "BH")) {
-  stop("Installed geneSCOPE API defaults do not match the frozen v1.0.2 contract.")
+  stop("Installed geneSCOPE API defaults do not match the frozen v1.2.0 contract.")
 }
 freeze_source <- require_freeze_source_metadata()
 paper_commit <- require_paper_commit_metadata()
@@ -300,7 +300,13 @@ output_sha256 <- as.list(vapply(
 manifest <- list(
   completed_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
   sample_id = sample_id,
+  artifact_series = "v102",
   package_version = as.character(utils::packageVersion("geneSCOPE")),
+  reference_provenance = list(
+    artifact_series = "v102",
+    candidate_package_version = "1.0.2",
+    note = "The v102 token identifies the frozen historical candidate-result series."
+  ),
   gate_max_abs_L_diff = gate_max_abs_L_diff,
   formula_id = lee$meta$formula_id,
   formula_gate = "canonical Lee S2 provenance accepted",

@@ -17,7 +17,7 @@
 
 ## Installation
 
-The `main` branch is the version 1.0.2 release line. The commands below verify
+The `main` branch is the version 1.2.0 release line. The commands below verify
 the installed package version before analysis.
 
 #### Option 1 (Recommended): Conda-heavy install (pin most deps in conda)
@@ -37,7 +37,7 @@ conda activate genescope
 ```r
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 remotes::install_github("CoooRossa/geneSCOPE@main")
-stopifnot(packageVersion("geneSCOPE") == "1.0.2")
+stopifnot(packageVersion("geneSCOPE") == "1.2.0")
 ```
 
 #### Option 2: Pure R install (no conda)
@@ -54,7 +54,7 @@ install.packages(c(
 ))
 BiocManager::install(c("rhdf5"))
 remotes::install_github("CoooRossa/geneSCOPE@main")
-stopifnot(packageVersion("geneSCOPE") == "1.0.2")
+stopifnot(packageVersion("geneSCOPE") == "1.2.0")
 ```
 
 ## Data-Type Workflows

@@ -33,8 +33,8 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
-if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.0.2")) {
-  stop("This frozen runner requires geneSCOPE 1.0.2")
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("This frozen runner requires geneSCOPE 1.2.0")
 }
 if (!cluster_pct %in% c("q95", "q99.9")) stop("Unsupported cluster_pct: ", cluster_pct)
 if (!is.finite(n_restart) || n_restart < 1L) stop("n_restart must be positive")

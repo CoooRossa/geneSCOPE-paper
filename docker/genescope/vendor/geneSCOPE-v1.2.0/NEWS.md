@@ -1,4 +1,4 @@
-# geneSCOPE 1.0.2
+# geneSCOPE 1.2.0
 
 - Lee's L uses the canonical S2 normalization throughout the R and native-code paths.
 - The default permutation mode is the all-grid joint row shuffle used in version 1.0.0. Block-constrained joint shuffling remains available with `use_blocks = TRUE`.

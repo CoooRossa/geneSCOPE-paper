@@ -6,6 +6,6 @@
 geneSCOPE/
 
 # Local build products are not part of a frozen source snapshot.
-vendor/geneSCOPE-v1.0.2/.git/
-vendor/geneSCOPE-v1.0.2/*.tar.gz
-vendor/geneSCOPE-v1.0.2/*.Rcheck/
+vendor/geneSCOPE-v1.2.0/.git/
+vendor/geneSCOPE-v1.2.0/*.tar.gz
+vendor/geneSCOPE-v1.2.0/*.Rcheck/
