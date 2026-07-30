@@ -5,6 +5,7 @@ Companion materials for the **geneSCOPE** manuscript:
 - ROI coordinate CSVs used in the paper
 - Reproducible Docker runners (geneSCOPE + baseline methods)
 - R scripts to generate benchmarking analyses (mapping to STRINGdb, edge-level, module-level, runtime panels)
+- Docker execution with the corrected geneSCOPE v1.2.0 release
 
 This repository does **not** include raw Xenium datasets; you must provide your own 10x Genomics Xenium `outs/` folder(s).
 
@@ -42,9 +43,8 @@ The ROI CSVs in `ROI-coordinate-files/` represent a polygon in Xenium coordinate
 
 ## Quick start (one command)
 
-1. Edit the paths at the top of `benchmark.sh`:
-   - `OUTS=/path/to/<xenium_outs_dir>`
-   - `ROI_CSV=/path/to/<roi.csv>` (you can point to a file under `ROI-coordinate-files/`)
+1. Select a sample and provide its Xenium `outs/` path. The matching ROI file
+   under `ROI-coordinate-files/` is used by default.
 2. Run:
 
 ```bash
@@ -55,38 +55,21 @@ Tip: for quick tests without editing the file, you can override parameters via e
 
 ```bash
 OUTS="/path/to/xenium_outs" \
-ROI_CSV="/path/to/roi.csv" \
+SAMPLE_ID="P5" \
 THREADS=16 \
 SEED=1 \
-DATASET_ID="GSE280314_P5" \
-ROI_ID="P5_tumor_region_final" \
 N_RUNS=1 \
 bash benchmark.sh
 ```
 
 ## Outputs
 
-`benchmark.sh` writes everything under `final_out/`:
+`benchmark.sh` writes each sample under `final_out/<SAMPLE_ID>/`:
 
-- Raw method outputs:
-  - `final_out/genescope/repeat_###/`
-  - `final_out/giotto/repeat_###/`
-  - `final_out/hotspot/repeat_###/`
-  - `final_out/seagal/` (container-level `stats.tsv` + `run.log`) and `final_out/seagal/repeat_###/`
-  - “All-edges” runs:
-    - `final_out/giotto-alledges/repeat_001/`
-    - `final_out/hotspot-alledges/repeat_001/`
-    - `final_out/seagal-alledges/repeat_001/`
-- Staged benchmark root for `mapping.R`:
-  - `final_out/for_compare/<method>/repeat_001/edges_all.tsv`
-  - `final_out/for_compare/<method>/repeat_001/modules.tsv`
-- STRINGdb mapping + downstream panels:
-  - `final_out/string1step/`
-  - `final_out/precision_and_recall/`
-  - `final_out/anchor-null2/`
-- Runtime panels input + plots:
-  - `final_out/runtime_panels_input/`
-  - `final_out/runtime_panels_input/plots_runtime/`
+- Raw method outputs: `final_out/<SAMPLE_ID>/<method>/`
+- Staged benchmark inputs: `final_out/<SAMPLE_ID>/for_compare/`
+- STRINGdb and downstream panels: `final_out/<SAMPLE_ID>/string1step/` and related directories
+- Runtime panels: `final_out/<SAMPLE_ID>/runtime_panels_input/`
 
 ### File-format guarantees (used by benchmarking scripts)
 
@@ -94,7 +77,7 @@ The pipeline standardizes outputs so the analysis scripts can read them:
 
 - `all_edges.tsv`: first 3 columns are `gene_a`, `gene_b`, `weight` (tab-separated).
 - `modules.tsv`: columns are `gene`, `module_id` (tab-separated).
-- `mapping.R` reads `edges_all.tsv` (a staged copy of `all_edges.tsv`) under `final_out/for_compare/...`.
+- `mapping.R` reads `edges_all.tsv` (a staged copy of `all_edges.tsv`) under `final_out/<SAMPLE_ID>/for_compare/...`.
 
 ## R dependencies (benchmark scripts)
 

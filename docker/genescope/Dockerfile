@@ -1,18 +1,15 @@
 FROM mambaorg/micromamba:1.5.8
 
-# ---- build args: local source path (relative to build context) ----
-ARG GENESCOPE_LOCAL=geneSCOPE
+ARG GENESCOPE_VERSION=1.2.0
 
 # ---- create conda env with R + deps ----
 COPY --chown=$MAMBA_USER:$MAMBA_USER env.yaml /tmp/env.yaml
 RUN micromamba create -y -n tool -f /tmp/env.yaml && micromamba clean -a -y
 ENV MAMBA_DOCKERFILE_ACTIVATE=1
 
-# ---- install geneSCOPE from local source ----
-COPY --chown=$MAMBA_USER:$MAMBA_USER ${GENESCOPE_LOCAL} /tmp/geneSCOPE_src
-RUN find /tmp/geneSCOPE_src -type f \( -name '*.o' -o -name '*.so' -o -name '*.dll' -o -name '*.dylib' -o -name '*.a' \) -delete && \
-    micromamba run -n tool R CMD INSTALL --preclean /tmp/geneSCOPE_src && \
-    rm -rf /tmp/geneSCOPE_src
+# ---- install and verify the corrected release ----
+RUN micromamba run -n tool R -e \
+    "remotes::install_github('CoooRossa/geneSCOPE', ref = 'v${GENESCOPE_VERSION}', dependencies = FALSE, upgrade = 'never'); stopifnot(as.character(utils::packageVersion('geneSCOPE')) == '${GENESCOPE_VERSION}')"
 
 # ---- app scripts ----
 WORKDIR /opt/app

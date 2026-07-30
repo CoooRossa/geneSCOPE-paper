@@ -3,6 +3,10 @@
 library(geneSCOPE)
 library(ggplot2)
 
+if (!identical(as.character(utils::packageVersion("geneSCOPE")), "1.2.0")) {
+  stop("This workflow requires geneSCOPE 1.2.0.")
+}
+
 gray_bg_theme <- ggplot2::theme(
   text = ggplot2::element_text(size = 8, face = "plain"),
   plot.background = ggplot2::element_rect(fill = "#c0c0c0", colour = NA),
@@ -50,14 +54,22 @@ P5.coord <- normalizeMoleculesInGrid(
 
 P5.coord <- computeWeights(
   scope_obj = P5.coord,
-  grid_name = grid_name
+  grid_name = grid_name,
+  style = "B",
+  topology = "auto",
+  store_mat = TRUE,
+  store_listw = TRUE,
+  ncores = 64
 )
 
 P5.coord <- computeL(
   scope_obj = P5.coord,
   use_bigmemory = FALSE,
   grid_name = grid_name,
-  ncores = 64
+  ncores = 64,
+  perms = 1000,
+  use_blocks = FALSE,
+  norm_layer = "Xz"
 )
 
 P5.coord <- computeCorrelation(
@@ -424,7 +436,16 @@ top.delta.l <- getTopLvsR(
   curve_layer = curve_name,
   CI_rule = "remove_within"
 )
-top.delta.l <- top.delta.l[top.delta.l$fdr < 0.05 & top.delta.l$pct1 >= 5 & top.delta.l$pct2 >= 5, , drop = FALSE]
+top.delta.l <- top.delta.l[
+  top.delta.l$fdr < 0.05 &
+    top.delta.l$L > 0 &
+    top.delta.l$r < 0.05 &
+    top.delta.l$pct1 > 20 &
+    top.delta.l$pct2 > 20,
+  ,
+  drop = FALSE
+]
+top.delta.l <- top.delta.l[order(top.delta.l$Delta, decreasing = TRUE), , drop = FALSE]
 
 if (nrow(top.delta.l) < 20) {
   stop("top.delta.l has fewer than 20 rows after filtering (n = ", nrow(top.delta.l), ").")

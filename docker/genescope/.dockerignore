@@ -1,6 +1,5 @@
 .DS_Store
 **/.DS_Store
 
-geneSCOPE/.git
-geneSCOPE/.github
-
+# The Docker image installs the tagged release directly.
+geneSCOPE/

@@ -1,2 +1,5 @@
 # macOS
 .DS_Store
+
+# Local benchmark outputs
+final_out/
