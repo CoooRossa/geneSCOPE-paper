@@ -5,7 +5,7 @@ Companion materials for the **geneSCOPE** manuscript:
 - ROI coordinate CSVs used in the paper
 - Reproducible Docker runners (geneSCOPE + baseline methods)
 - R scripts to generate benchmarking analyses (mapping to STRINGdb, edge-level, module-level, runtime panels)
-- Docker execution with the corrected geneSCOPE v1.2.0 release
+- Docker execution with geneSCOPE v1.2.0 at commit `e5e7af8a3b5129ace885dc765e72ea75dd4a6665`
 
 This repository does **not** include raw Xenium datasets; you must provide your own 10x Genomics Xenium `outs/` folder(s).
 
@@ -48,7 +48,7 @@ The ROI CSVs in `ROI-coordinate-files/` represent a polygon in Xenium coordinate
 2. Run:
 
 ```bash
-bash benchmark.sh
+SAMPLE_ID=P5 OUTS="/absolute/path/to/xenium_outs" bash benchmark.sh
 ```
 
 Tip: for quick tests without editing the file, you can override parameters via environment variables:
